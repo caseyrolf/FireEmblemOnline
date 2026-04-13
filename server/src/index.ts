@@ -3,7 +3,11 @@ import express from "express";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import {
+  calculateDamage,
   CLASS_TEMPLATES,
+  getPortraitForUnit,
+  getTerrainDefense,
+  type AuthUser,
   type CharacterDraft,
   type ClientToServerEvents,
   type CombatLogEntry,
@@ -17,19 +21,190 @@ import {
   type Unit,
   type UnitClass
 } from "../../shared/game.js";
-import { ensureDatabase, loadRoomState, saveRoomState } from "./db.js";
+import { createId, hashPassword, readBearerToken, verifyPassword } from "./auth.js";
+import {
+  listActiveGamesForUser,
+  createAuthSession,
+  createProfileCharacter,
+  createUserAccount,
+  deleteAuthSession,
+  deleteProfileCharacter,
+  ensureDatabase,
+  findUserByEmail,
+  getSessionUser,
+  listProfileCharacters,
+  loadRoomState,
+  recordRoomOutcome,
+  saveRoomState
+} from "./db.js";
 
 type Room = {
   state: GameState;
   sockets: Map<string, string>;
 };
 
+type AuthedRequest = express.Request & {
+  authUser?: AuthUser;
+  authToken?: string;
+};
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+async function authenticateRequest(req: AuthedRequest, res: express.Response, next: express.NextFunction) {
+  const token = readBearerToken(req.headers.authorization);
+  if (!token) {
+    res.status(401).json({ message: "Missing auth token." });
+    return;
+  }
+
+  const session = await getSessionUser(token);
+  if (!session) {
+    res.status(401).json({ message: "Session expired or invalid." });
+    return;
+  }
+
+  req.authUser = session.user;
+  req.authToken = session.token;
+  next();
+}
+
+function sanitizeDisplayName(value: string) {
+  return value.trim().slice(0, 20);
+}
+
+function sanitizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function authPayload(user: AuthUser, token: string) {
+  return { token, user };
+}
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const email = sanitizeEmail(String(req.body?.email ?? ""));
+  const password = String(req.body?.password ?? "");
+  const displayName = sanitizeDisplayName(String(req.body?.displayName ?? ""));
+
+  if (!email || !password || !displayName) {
+    res.status(400).json({ message: "Email, password, and display name are required." });
+    return;
+  }
+
+  if (password.length < 6) {
+    res.status(400).json({ message: "Password must be at least 6 characters." });
+    return;
+  }
+
+  if (await findUserByEmail(email)) {
+    res.status(409).json({ message: "That email is already registered." });
+    return;
+  }
+
+  const salt = createId(12);
+  const user = await createUserAccount({
+    id: createId(),
+    email,
+    salt,
+    passwordHash: hashPassword(password, salt),
+    displayName
+  });
+  const token = createId(24);
+  await createAuthSession({
+    token,
+    userId: user.id,
+    expiresAt: new Date(Date.now() + SESSION_LENGTH_MS)
+  });
+  res.status(201).json(authPayload(user, token));
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  const email = sanitizeEmail(String(req.body?.email ?? ""));
+  const password = String(req.body?.password ?? "");
+  const user = await findUserByEmail(email);
+
+  if (!user || !verifyPassword(password, user.salt, user.passwordHash)) {
+    res.status(401).json({ message: "Invalid email or password." });
+    return;
+  }
+
+  const token = createId(24);
+  await createAuthSession({
+    token,
+    userId: user.id,
+    expiresAt: new Date(Date.now() + SESSION_LENGTH_MS)
+  });
+  res.json(
+    authPayload(
+      {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        wins: user.wins,
+        losses: user.losses
+      },
+      token
+    )
+  );
+});
+
+app.get("/api/auth/me", authenticateRequest, async (req: AuthedRequest, res) => {
+  res.json({ user: req.authUser });
+});
+
+app.post("/api/auth/logout", authenticateRequest, async (req: AuthedRequest, res) => {
+  if (req.authToken) {
+    await deleteAuthSession(req.authToken);
+  }
+  res.json({ ok: true });
+});
+
+app.get("/api/profile/characters", authenticateRequest, async (req: AuthedRequest, res) => {
+  const records = await listProfileCharacters(req.authUser!.id);
+  res.json({ characters: records });
+});
+
+app.post("/api/profile/characters", authenticateRequest, async (req: AuthedRequest, res) => {
+  const name = sanitizeDisplayName(String(req.body?.name ?? ""));
+  const className = String(req.body?.className ?? "") as UnitClass;
+  const portraitUrl =
+    typeof req.body?.portraitUrl === "string" && req.body.portraitUrl.startsWith("data:image/")
+      ? req.body.portraitUrl
+      : undefined;
+  if (!name || !(className in CLASS_TEMPLATES)) {
+    res.status(400).json({ message: "A valid character name and class are required." });
+    return;
+  }
+
+  const records = await listProfileCharacters(req.authUser!.id);
+  if (records.length >= 12) {
+    res.status(400).json({ message: "You can save up to 12 profile characters." });
+    return;
+  }
+
+  const record = await createProfileCharacter({
+    id: createId(),
+    userId: req.authUser!.id,
+    name,
+    className,
+    portraitUrl
+  });
+  res.status(201).json({ character: record });
+});
+
+app.delete("/api/profile/characters/:id", authenticateRequest, async (req: AuthedRequest, res) => {
+  await deleteProfileCharacter(String(req.params.id), req.authUser!.id);
+  res.json({ ok: true });
+});
+
+app.get("/api/profile/games", authenticateRequest, async (req: AuthedRequest, res) => {
+  const games = await listActiveGamesForUser(req.authUser!.id);
+  res.json({ games });
 });
 
 const httpServer = createServer(app);
@@ -42,6 +217,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
 const rooms = new Map<string, Room>();
 const PLAYER_LIMIT = 8;
 const CHARACTER_LIMIT = 2;
+const SESSION_LENGTH_MS = 1000 * 60 * 60 * 24 * 30;
 
 function createRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -121,7 +297,8 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     selectedUnitId: null,
     highlights: [],
     logs: [{ id: cryptoRandomId(), text: `${hostName} opened room ${roomCode}.` }],
-    winner: null
+    winner: null,
+    outcomeRecorded: false
   };
 }
 
@@ -130,6 +307,19 @@ function getRoom(roomCode: string) {
 }
 
 async function emitState(room: Room) {
+  if (room.state.status === "complete" && !room.state.outcomeRecorded) {
+    const playerUserIds = [...new Set(room.state.players
+      .map((player) => player.userId)
+      .filter((value): value is string => Boolean(value)))];
+    if (playerUserIds.length > 0) {
+      if (room.state.winner === "player") {
+        await recordRoomOutcome(playerUserIds, []);
+      } else if (room.state.winner === "enemy") {
+        await recordRoomOutcome([], playerUserIds);
+      }
+    }
+    room.state.outcomeRecorded = true;
+  }
   await saveRoomState(room.state);
   io.to(room.state.roomCode).emit("stateUpdated", clone(room.state));
 }
@@ -252,6 +442,7 @@ function resetPlayerActions(state: GameState) {
     if (unit.team === "player" && unit.alive) {
       unit.acted = false;
       unit.moved = false;
+      unit.originalPosition = { ...unit.position };
     }
   }
 }
@@ -261,6 +452,7 @@ function resetEnemyActions(state: GameState) {
     if (unit.team === "enemy" && unit.alive) {
       unit.acted = false;
       unit.moved = false;
+      unit.originalPosition = { ...unit.position };
     }
   }
 }
@@ -279,20 +471,25 @@ function seededEnemyStats(className: UnitClass) {
 }
 
 function spawnUnits(state: GameState) {
-  const playerUnits: Unit[] = state.characterDrafts.map((draft, index) => ({
-    id: draft.id,
-    name: draft.name,
-    className: draft.className,
-    team: "player",
-    ownerId: draft.ownerId,
-    position: state.map.playerStarts[index] ?? { x: 0, y: 7 - index },
-    stats: clone(CLASS_TEMPLATES[draft.className]),
-    acted: false,
-    moved: false,
-    level: 1,
-    exp: 0,
-    alive: true
-  }));
+  const playerUnits: Unit[] = state.characterDrafts.map((draft, index) => {
+    const position = state.map.playerStarts[index] ?? { x: 0, y: 7 - index };
+    return {
+      id: draft.id,
+      name: draft.name,
+      className: draft.className,
+      team: "player",
+      ownerId: draft.ownerId,
+      portraitUrl: getPortraitForUnit("player", draft.className, draft.portraitUrl),
+      position,
+      originalPosition: { ...position },
+      stats: clone(CLASS_TEMPLATES[draft.className]),
+      acted: false,
+      moved: false,
+      level: 1,
+      exp: 0,
+      alive: true
+    };
+  });
 
   const enemies: Array<{ name: string; className: UnitClass; position: Position }> = [
     { name: "Bandit Axer", className: "Brigand", position: { x: 6, y: 1 } },
@@ -305,7 +502,9 @@ function spawnUnits(state: GameState) {
     name: enemy.name,
     className: enemy.className,
     team: "enemy",
+    portraitUrl: getPortraitForUnit("enemy", enemy.className),
     position: enemy.position,
+    originalPosition: { ...enemy.position },
     stats: seededEnemyStats(enemy.className),
     acted: false,
     moved: false,
@@ -325,14 +524,13 @@ function resetBattleState(state: GameState) {
   state.selectedUnitId = null;
   state.highlights = [];
   state.winner = null;
+  state.outcomeRecorded = false;
   spawnUnits(state);
 }
 
 function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
-  const terrain = getTile(state.map, defender.position);
-  const power = attacker.stats.str || attacker.stats.mag;
-  const defense = (attacker.stats.mag > attacker.stats.str ? defender.stats.res : defender.stats.def) + (terrain?.defense ?? 0);
-  const damage = Math.max(1, power + Math.floor(attacker.level / 2) - defense);
+  const defenderTerrainDefense = getTerrainDefense(state.map, defender.position);
+  const damage = calculateDamage(attacker, defender, defenderTerrainDefense);
   defender.stats.hp = Math.max(0, defender.stats.hp - damage);
   attacker.acted = true;
   state.selectedUnitId = null;
@@ -348,11 +546,8 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   } else {
     const retaliateDistance = distance(attacker.position, defender.position);
     if (retaliateDistance <= defender.stats.range) {
-      const counterPower = defender.stats.str || defender.stats.mag;
-      const counterDefense =
-        (defender.stats.mag > defender.stats.str ? attacker.stats.res : attacker.stats.def) +
-        (getTile(state.map, attacker.position)?.defense ?? 0);
-      const counterDamage = Math.max(1, counterPower - counterDefense);
+      const attackerTerrainDefense = getTerrainDefense(state.map, attacker.position);
+      const counterDamage = calculateDamage(defender, attacker, attackerTerrainDefense);
       attacker.stats.hp = Math.max(0, attacker.stats.hp - counterDamage);
       pushLog(state, `${defender.name} countered for ${counterDamage}.`);
       if (attacker.stats.hp === 0) {
@@ -380,11 +575,13 @@ function checkWinState(state: GameState) {
   }
 }
 
-function takeEnemyPhase(state: GameState) {
+async function takeEnemyPhase(room: Room) {
+  const state = room.state;
   state.phase = "enemy";
   state.activePlayerId = null;
   resetEnemyActions(state);
   pushLog(state, "Enemy phase begins.");
+  await emitState(room);
 
   for (const enemy of state.units.filter((unit) => unit.team === "enemy" && unit.alive)) {
     const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
@@ -399,11 +596,15 @@ function takeEnemyPhase(state: GameState) {
       if (options[0]) {
         enemy.position = options[0];
         enemy.moved = true;
+        await emitState(room);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
     const victim = attackableTargets(state, enemy).sort((a, b) => a.stats.hp - b.stats.hp)[0];
     if (victim) {
       resolveAttack(state, enemy, victim);
+      await emitState(room);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } else {
       enemy.acted = true;
     }
@@ -416,6 +617,7 @@ function takeEnemyPhase(state: GameState) {
     resetPlayerActions(state);
     pushLog(state, `Turn ${state.turnCount} begins.`);
   }
+  await emitState(room);
 }
 
 async function ensureRoom(socketId: string, roomCode: string) {
@@ -439,10 +641,25 @@ async function markDisconnected(playerId: string) {
   }
 }
 
+async function leaveRoomByPlayerId(playerId: string) {
+  for (const room of rooms.values()) {
+    const player = room.state.players.find((entry) => entry.id === playerId);
+    if (player) {
+      player.connected = false;
+      room.sockets.delete(playerId);
+      pushLog(room.state, `${player.name} left the chapter view.`);
+      await emitState(room);
+      return room;
+    }
+  }
+
+  return null;
+}
+
 io.on("connection", (socket) => {
   let playerId = "";
 
-  socket.on("createRoom", async ({ name }, callback) => {
+  socket.on("createRoom", async ({ name, userId }, callback) => {
     const trimmedName = name.trim().slice(0, 20);
     if (!trimmedName) {
       callback({ ok: false, message: "Choose a player name." });
@@ -456,6 +673,7 @@ io.on("connection", (socket) => {
 
     playerId = cryptoRandomId();
     const room = { state: initialState(roomCode, playerId, trimmedName), sockets: new Map<string, string>() };
+    room.state.players[0].userId = userId;
     room.sockets.set(playerId, socket.id);
     rooms.set(roomCode, room);
     socket.join(roomCode);
@@ -463,7 +681,7 @@ io.on("connection", (socket) => {
     await emitState(room);
   });
 
-  socket.on("joinRoom", async ({ roomCode, name }, callback) => {
+  socket.on("joinRoom", async ({ roomCode, name, userId }, callback) => {
     const room = await getOrLoadRoom(roomCode);
     const trimmedName = name.trim().slice(0, 20);
     if (!room) {
@@ -484,7 +702,8 @@ io.on("connection", (socket) => {
       id: playerId,
       name: trimmedName,
       connected: true,
-      isHost: false
+      isHost: false,
+      userId
     };
     room.state.players.push(player);
     room.sockets.set(playerId, socket.id);
@@ -494,7 +713,7 @@ io.on("connection", (socket) => {
     await emitState(room);
   });
 
-  socket.on("resumeSession", async ({ roomCode, playerId: requestedPlayerId, name }, callback) => {
+  socket.on("resumeSession", async ({ roomCode, playerId: requestedPlayerId, name, userId }, callback) => {
     const room = await getOrLoadRoom(roomCode);
     const trimmedName = name.trim().slice(0, 20);
     if (!room) {
@@ -510,6 +729,9 @@ io.on("connection", (socket) => {
 
     playerId = requestedPlayerId;
     player.connected = true;
+    if (userId) {
+      player.userId = userId;
+    }
     room.sockets.set(playerId, socket.id);
     socket.join(room.state.roomCode);
     pushLog(room.state, `${player.name} rejoined the battle.`);
@@ -517,7 +739,7 @@ io.on("connection", (socket) => {
     await emitState(room);
   });
 
-  socket.on("createCharacter", async ({ roomCode, name, className }) => {
+  socket.on("createCharacter", async ({ roomCode, name, className, portraitUrl }) => {
     const room = await ensureRoom(socket.id, roomCode);
     if (!room || room.state.status !== "lobby" || !playerId) {
       return;
@@ -537,7 +759,8 @@ io.on("connection", (socket) => {
       id: cryptoRandomId(),
       ownerId: playerId,
       name: trimmedName,
-      className
+      className,
+      portraitUrl: portraitUrl?.startsWith("data:image/") ? portraitUrl : undefined
     };
     room.state.characterDrafts.push(draft);
     pushLog(room.state, `${player.name} recruited ${draft.name} the ${draft.className}.`);
@@ -587,6 +810,7 @@ io.on("connection", (socket) => {
       io.to(socket.id).emit("errorMessage", "That move is not valid.");
       return;
     }
+    unit.originalPosition = { ...unit.position };
     unit.position = position;
     unit.moved = true;
     room.state.selectedUnitId = unit.id;
@@ -613,7 +837,7 @@ io.on("connection", (socket) => {
     resolveAttack(room.state, attacker, target);
     checkWinState(room.state);
     if (room.state.status !== "complete" && allPlayerUnitsActed(room.state)) {
-      takeEnemyPhase(room.state);
+      await takeEnemyPhase(room);
     }
     await emitState(room);
   });
@@ -632,8 +856,26 @@ io.on("connection", (socket) => {
     room.state.highlights = [];
     pushLog(room.state, `${unit.name} waited.`);
     if (allPlayerUnitsActed(room.state)) {
-      takeEnemyPhase(room.state);
+      await takeEnemyPhase(room);
     }
+    await emitState(room);
+  });
+
+  socket.on("cancelMove", async ({ roomCode, unitId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      return;
+    }
+    const unit = findUnit(room.state, unitId);
+    if (!unit || unit.acted || !unit.moved || !canControlUnit(room.state, playerId, unit)) {
+      return;
+    }
+    unit.position = { ...unit.originalPosition };
+    unit.moved = false;
+    room.state.selectedUnitId = unit.id;
+    room.state.highlights = movementRange(room.state, unit);
+    room.state.activePlayerId = playerId;
+    pushLog(room.state, `${unit.name} canceled their move.`);
     await emitState(room);
   });
 
@@ -646,7 +888,7 @@ io.on("connection", (socket) => {
       unit.acted = true;
     }
     pushLog(room.state, "The party ended the phase.");
-    takeEnemyPhase(room.state);
+    await takeEnemyPhase(room);
     await emitState(room);
   });
 
@@ -662,6 +904,23 @@ io.on("connection", (socket) => {
     resetBattleState(room.state);
     pushLog(room.state, "The DM restarted the map.");
     await emitState(room);
+  });
+
+  socket.on("leaveRoom", async ({ roomCode }, callback) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      callback({ ok: false });
+      return;
+    }
+    const player = room.state.players.find((entry) => entry.id === playerId);
+    if (!player) {
+      callback({ ok: false });
+      return;
+    }
+    socket.leave(room.state.roomCode);
+    await leaveRoomByPlayerId(playerId);
+    playerId = "";
+    callback({ ok: true });
   });
 
   socket.on("disconnect", async () => {
