@@ -49,6 +49,8 @@ type AppStore = {
   attackUnit: (attackerId: string, targetId: string) => void;
   waitUnit: (unitId: string) => void;
   cancelMove: (unitId: string) => void;
+  equipWeapon: (unitId: string, weaponId: string | null) => void;
+  useItem: (unitId: string, itemId: string) => void;
   endTurn: () => void;
   restartMap: () => void;
   clearAttackAnimation: () => void;
@@ -412,6 +414,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const roomCode = get().state?.roomCode;
     if (roomCode) {
       get().socket?.emit("cancelMove", { roomCode, unitId });
+    }
+  },
+  equipWeapon: (unitId, weaponId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("equipWeapon", { roomCode, unitId, weaponId });
+    }
+  },
+  useItem: (unitId, itemId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("useItem", { roomCode, unitId, itemId });
     }
   },
   endTurn: () => {

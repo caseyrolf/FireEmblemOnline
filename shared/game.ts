@@ -1,7 +1,23 @@
-export type TerrainType = "grass" | "forest" | "fort" | "wall" | "goal";
+export type TerrainType = "grass" | "forest" | "fort" | "mountain" | "goal";
 export type UnitTeam = "player" | "enemy";
 export type UnitClass = "Lord" | "Mercenary" | "Mage" | "Cleric" | "Knight" | "Brigand" | "Archer";
 export type TurnPhase = "player" | "enemy" | "victory" | "defeat";
+
+export type WeaponType = "Sword" | "Lance" | "Axe" | "Bow" | "Magic Tome" | "Staff";
+export type ItemType = "Potion";
+
+export type Weapon = {
+  id: string;
+  name: string;
+  type: WeaponType;
+  might: number;
+};
+
+export type Item = {
+  id: string;
+  name: string;
+  type: ItemType;
+};
 
 export type Position = {
   x: number;
@@ -43,6 +59,11 @@ export type Unit = {
   level: number;
   exp: number;
   alive: boolean;
+  inventory: {
+    weapons: Weapon[];
+    items: Item[];
+  };
+  equippedWeapon: Weapon | null;
 };
 
 export type PlayerPresence = {
@@ -114,6 +135,8 @@ export type ClientToServerEvents = {
   attackUnit: (payload: { roomCode: string; attackerId: string; targetId: string }) => void;
   waitUnit: (payload: { roomCode: string; unitId: string }) => void;
   cancelMove: (payload: { roomCode: string; unitId: string }) => void;
+  equipWeapon: (payload: { roomCode: string; unitId: string; weaponId: string | null }) => void;
+  useItem: (payload: { roomCode: string; unitId: string; itemId: string }) => void;
   endTurn: (payload: { roomCode: string }) => void;
   restartMap: (payload: { roomCode: string }) => void;
   leaveRoom: (payload: { roomCode: string }, callback: (response: { ok: boolean }) => void) => void;
@@ -166,11 +189,30 @@ export const CLASS_TEMPLATES: Record<UnitClass, Stats> = {
 
 export const CLASS_OPTIONS = Object.keys(CLASS_TEMPLATES) as UnitClass[];
 
+export const WEAPONS: Weapon[] = [
+  { id: "iron-sword", name: "Iron Sword", type: "Sword", might: 5 },
+  { id: "steel-sword", name: "Steel Sword", type: "Sword", might: 8 },
+  { id: "iron-lance", name: "Iron Lance", type: "Lance", might: 5 },
+  { id: "steel-lance", name: "Steel Lance", type: "Lance", might: 8 },
+  { id: "iron-axe", name: "Iron Axe", type: "Axe", might: 5 },
+  { id: "steel-axe", name: "Steel Axe", type: "Axe", might: 8 },
+  { id: "iron-bow", name: "Iron Bow", type: "Bow", might: 5 },
+  { id: "steel-bow", name: "Steel Bow", type: "Bow", might: 8 },
+  { id: "fire-tome", name: "Fire Tome", type: "Magic Tome", might: 5 },
+  { id: "thunder-tome", name: "Thunder Tome", type: "Magic Tome", might: 8 },
+  { id: "heal-staff", name: "Heal Staff", type: "Staff", might: 0 },
+  { id: "mend-staff", name: "Mend Staff", type: "Staff", might: 0 },
+];
+
+export const ITEMS: Item[] = [
+  { id: "potion", name: "Potion", type: "Potion" },
+];
+
 export const TERRAIN_STYLE: Record<TerrainType, { label: string; color: string; icon: string }> = {
   grass: { label: "Grass", color: "#5e9b50", icon: "." },
   forest: { label: "Forest", color: "#2f6e3f", icon: "^" },
   fort: { label: "Fort", color: "#8f6b42", icon: "H" },
-  wall: { label: "Wall", color: "#4f5563", icon: "#" },
+  mountain: { label: "mountain", color: "#4f5563", icon: "#" },
   goal: { label: "Goal", color: "#c69c2d", icon: "*" }
 };
 
@@ -185,13 +227,13 @@ const PORTRAIT_STYLE: Record<UnitClass, { fill: string; accent: string; mark: st
 };
 
 export const CLASS_IMAGES: Record<UnitClass, string> = {
-  Lord: "/classes/Lord.PNG",
-  Mercenary: "/classes/mercenary.PNG",
-  Mage: "/classes/mage.PNG",
-  Cleric: "/classes/cleric.PNG",
-  Knight: "/classes/knight.PNG",
-  Brigand: "/classes/brigand.PNG",
-  Archer: "/classes/archer.PNG"
+  Lord: "/classes/lord.png",
+  Mercenary: "/classes/mercenary.png",
+  Mage: "/classes/mage.png",
+  Cleric: "/classes/cleric.png",
+  Knight: "/classes/knight.png",
+  Brigand: "/classes/brigand.png",
+  Archer: "/classes/archer.png"
 };
 
 function svgToDataUrl(svg: string) {
@@ -235,8 +277,18 @@ export function getTerrainDefense(map: GameMap, position: Position): number {
 }
 
 export function calculateDamage(attacker: Unit, defender: Unit, terrainDefense: number): number {
-  const power = attacker.stats.str || attacker.stats.mag;
-  const defense = (attacker.stats.mag > attacker.stats.str ? defender.stats.res : defender.stats.def) + terrainDefense;
+  let power = 0;
+  if (attacker.equippedWeapon) {
+    power += attacker.equippedWeapon.might;
+    if (attacker.equippedWeapon.type === "Magic Tome") {
+      power += attacker.stats.mag;
+    } else {
+      power += attacker.stats.str;
+    }
+  } else {
+    power = attacker.stats.str || attacker.stats.mag;
+  }
+  const defense = (attacker.equippedWeapon?.type === "Magic Tome" ? defender.stats.res : defender.stats.def) + terrainDefense;
   return Math.max(1, power + Math.floor(attacker.level / 2) - defense);
 }
 
@@ -318,7 +370,7 @@ export function findPath(start: Position, end: Position, map: GameMap, blockedPo
         return false;
       }
       const tile = map.tiles[neighbor.y]?.[neighbor.x];
-      if (!tile || tile.type === "wall") {
+      if (!tile || tile.type === "mountain") {
         return false;
       }
       if (blockedPositions.has(positionKey(neighbor))) {

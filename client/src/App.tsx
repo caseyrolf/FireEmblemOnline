@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CLASS_OPTIONS, TERRAIN_STYLE, getDefaultPortrait, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath } from "../../shared/game";
+import { CLASS_OPTIONS, TERRAIN_STYLE, getDefaultPortrait, getClassImage, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
 
 function tileKey(position: Position) {
   return `${position.x},${position.y}`;
+}
+
+function getTerrainImage(type: string): string {
+  const mapping: Record<string, string> = {
+    grass: "Grass.PNG",
+    forest: "Forest.PNG",
+    fort: "fort.PNG",
+    mountain: "Mountain.PNG",
+    goal: "goal.PNG"
+  };
+  return `/terrain/${mapping[type] || "Grass.PNG"}`;
 }
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -394,6 +405,8 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const attackUnit = useAppStore((store) => store.attackUnit);
   const waitUnit = useAppStore((store) => store.waitUnit);
   const cancelMove = useAppStore((store) => store.cancelMove);
+  const equipWeapon = useAppStore((store) => store.equipWeapon);
+  const useItem = useAppStore((store) => store.useItem);
   const endTurn = useAppStore((store) => store.endTurn);
   const restartMap = useAppStore((store) => store.restartMap);
   const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
@@ -534,6 +547,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         </div>
       </div>
       <div className="layout battle-layout">
+        <BattleLog logs={state.logs} />
         <section className="panel map-panel">
           <div className="grid-board" style={{ gridTemplateColumns: `repeat(${state.map.width}, 1fr)` }}>
             {state.map.tiles.flatMap((row, y) =>
@@ -552,8 +566,8 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                   <button
                     key={`${x}-${y}`}
                     className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""}`}
-                    style={{ background: TERRAIN_STYLE[tile.type].color }}
-                    title={TERRAIN_STYLE[tile.type].label}
+                    style={{ backgroundImage: `url(${getTerrainImage(tile.type)})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+                    title={TERRAIN_STYLE[tile.type]?.label || tile.type}
                     onMouseEnter={() => setHoveredUnitId(occupant?.id ?? null)}
                     onClick={() => {
                       if (occupant) {
@@ -570,7 +584,6 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                       }
                     }}
                   >
-                    <span className="terrain-mark">{TERRAIN_STYLE[tile.type].icon}</span>
                     {occupant ? (
                       <motion.div
                         layout
@@ -579,8 +592,11 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                         animate={{ scale: 1, opacity: 1 }}
                       >
                         <div className="unit-chip-main">
-                          <span>{occupant.name.slice(0, 2).toUpperCase()}</span>
-                          <small>{occupant.stats.hp}</small>
+                          <img src={getClassImage(occupant.className)} alt={occupant.className} className="unit-chip-image" />
+                          <div className="unit-chip-info">
+                            <span>{occupant.name.slice(0, 2).toUpperCase()}</span>
+                            <small>{occupant.stats.hp}</small>
+                          </div>
                         </div>
                         <div className="health-bar">
                           <div className="health-bar-fill" style={{ width: `${healthPercent(occupant)}%` }} />
@@ -593,83 +609,148 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
             )}
           </div>
         </section>
-        <section className="stack">
-          <section className="panel">
-            <h3>Actions</h3>
-            {selectedUnit ? (
-              <div className="selected-card">
-                <strong>
-                  {selectedUnit.name} - {selectedUnit.className}
-                </strong>
-                <span>
-                  HP {selectedUnit.stats.hp}/{selectedUnit.stats.maxHp} - MOV {selectedUnit.stats.mov} - RNG {selectedUnit.stats.range}
-                </span>
+        <section className="panel">
+          <h3>Actions</h3>
+          {selectedUnit ? (
+            <div className="selected-card">
+              <div className="unit-stats">
+                <strong>{selectedUnit.name}</strong>
+                <span>{selectedUnit.className}</span>
+                <span>HP {selectedUnit.stats.hp}/{selectedUnit.stats.maxHp}</span>
+                <span>MOV {selectedUnit.stats.mov} - RNG {selectedUnit.stats.range}</span>
                 <div className="health-bar detail-health-bar">
                   <div className="health-bar-fill" style={{ width: `${healthPercent(selectedUnit)}%` }} />
                 </div>
                 <span>{selectedUnit.moved ? "Movement spent this turn" : "Movement available"}</span>
-                {selectedUnit.moved && !selectedUnit.acted ? (
-                  <button onClick={() => cancelMove(selectedUnit.id)}>Cancel Move</button>
-                ) : null}
-                <button onClick={() => waitUnit(selectedUnit.id)}>Wait</button>
               </div>
-            ) : (
-              <p className="muted">Select one of your units, move onto a highlighted tile, then click an enemy to attack if they are in range.</p>
-            )}
-            <button className="secondary" onClick={endTurn} disabled={state.phase !== "player" || state.status !== "battle"}>
-              End Player Phase
-            </button>
-            {canRestart ? <button onClick={restartMap}>Restart Map</button> : null}
-          </section>
-          <section className="panel">
-            <h3>Unit Detail</h3>
-            {hoveredUnit ? (
-              <div className="detail-card">
-                <img className="unit-portrait" src={hoveredUnit.portraitUrl} alt={`${hoveredUnit.name} portrait`} />
-                <strong>
-                  {hoveredUnit.name} - {hoveredUnit.className}
-                </strong>
-                <span>{hoveredUnit.team === "player" ? "Allied Unit" : "Enemy Unit"}</span>
-                <span>
-                  HP {hoveredUnit.stats.hp}/{hoveredUnit.stats.maxHp}
-                </span>
-                <div className="health-bar detail-health-bar">
-                  <div className="health-bar-fill" style={{ width: `${healthPercent(hoveredUnit)}%` }} />
-                </div>
-                <span>
-                  STR {hoveredUnit.stats.str} - MAG {hoveredUnit.stats.mag} - DEF {hoveredUnit.stats.def}
-                </span>
-                {combatPreview ? (
-                  <div className="combat-preview">
-                    <h4>Combat Preview</h4>
-                    <div className="preview-row">
-                      <span>{selectedUnit!.name} attacks:</span>
-                      <span>{combatPreview.baseAttackerDamage} dmg {combatPreview.doubles ? '(x2)' : ''}</span>
-                      <span>HP: {hoveredUnit.stats.hp} → {combatPreview.defenderRemainingHp}</span>
-                    </div>
-                    {combatPreview.canCounter ? (
-                      <div className="preview-row">
-                        <span>{hoveredUnit.name} counters:</span>
-                        <span>{combatPreview.defenderDamage} dmg</span>
-                        <span>HP: {selectedUnit!.stats.hp} → {combatPreview.attackerRemainingHp}</span>
-                      </div>
-                    ) : (
-                      <div className="preview-row">
-                        <span>{hoveredUnit.name} cannot counter</span>
-                      </div>
+              <div className="unit-equipment">
+                <h4>Equipment</h4>
+                <span>{selectedUnit.equippedWeapon ? `Equipped: ${selectedUnit.equippedWeapon.name}` : "No weapon equipped"}</span>
+                {selectedUnit.inventory.weapons.length > 0 ? (
+                  <div className="button-group">
+                    {selectedUnit.inventory.weapons.map((weapon) => (
+                      <button
+                        key={weapon.id}
+                        className="small-button"
+                        onClick={() => equipWeapon(selectedUnit.id, weapon.id)}
+                        disabled={selectedUnit.equippedWeapon?.id === weapon.id}
+                      >
+                        Equip {weapon.name}
+                      </button>
+                    ))}
+                    {selectedUnit.equippedWeapon && (
+                      <button className="small-button" onClick={() => equipWeapon(selectedUnit.id, null)}>Unequip</button>
                     )}
-                    <div className="preview-row">
-                      <span>Hit: {combatPreview.hitChance}%</span>
-                      <span>Crit: {combatPreview.critChance}%</span>
-                    </div>
                   </div>
                 ) : null}
               </div>
-            ) : (
-              <p className="muted">Hover a unit to inspect it.</p>
-            )}
-          </section>
-          <BattleLog logs={state.logs} />
+              <div className="unit-inventory">
+                <h4>Inventory</h4>
+                {selectedUnit.inventory.items.length > 0 ? (
+                  <div className="button-group">
+                    {selectedUnit.inventory.items.map((item) => (
+                      <button key={item.id} className="small-button" onClick={() => useItem(selectedUnit.id, item.id)}>
+                        Use {item.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : <span>No items</span>}
+              </div>
+              <div className="unit-actions">
+                <h4>Actions</h4>
+                <div className="button-group">
+                  {selectedUnit.moved && !selectedUnit.acted ? (
+                    <button className="small-button" onClick={() => cancelMove(selectedUnit.id)}>Cancel Move</button>
+                  ) : null}
+                  <button className="small-button" onClick={() => waitUnit(selectedUnit.id)}>Wait</button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">Select one of your units, move onto a highlighted tile, then click an enemy to attack if they are in range.</p>
+          )}
+          <div className="turn-actions">
+            <h4>Turn Actions</h4>
+            <div className="button-group">
+              <button className="secondary" onClick={endTurn} disabled={state.phase !== "player" || state.status !== "battle"}>
+                End Player Phase
+              </button>
+              {canRestart ? <button onClick={restartMap}>Restart Map</button> : null}
+            </div>
+          </div>
+        </section>
+        <section className="panel">
+          <h3>Unit Detail</h3>
+          {hoveredUnit ? (
+            <div className="detail-card">
+              <img className="unit-portrait" src={hoveredUnit.portraitUrl} alt={`${hoveredUnit.name} portrait`} />
+              <strong>
+                {hoveredUnit.name} - {hoveredUnit.className}
+              </strong>
+              <span>{hoveredUnit.team === "player" ? "Allied Unit" : "Enemy Unit"}</span>
+              <span>
+                HP {hoveredUnit.stats.hp}/{hoveredUnit.stats.maxHp}
+              </span>
+              <div className="health-bar detail-health-bar">
+                <div className="health-bar-fill" style={{ width: `${healthPercent(hoveredUnit)}%` }} />
+              </div>
+              <span>
+                STR {hoveredUnit.stats.str} - MAG {hoveredUnit.stats.mag} - DEF {hoveredUnit.stats.def} - RES {hoveredUnit.stats.res}
+              </span>
+              <span>Equipped Weapon: {hoveredUnit.equippedWeapon ? `${hoveredUnit.equippedWeapon.name} (${hoveredUnit.equippedWeapon.might} might)` : "None"}</span>
+              {hoveredUnit.inventory.weapons.length > 0 ? (
+                <div>
+                  <h4>Weapons</h4>
+                  <ul>
+                    {hoveredUnit.inventory.weapons.map((weapon) => (
+                      <li key={weapon.id}>
+                        {weapon.name} ({weapon.type}, {weapon.might} might)
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {hoveredUnit.inventory.items.length > 0 ? (
+                <div>
+                  <h4>Items</h4>
+                  <ul>
+                    {hoveredUnit.inventory.items.map((item) => (
+                      <li key={item.id}>
+                        {item.name} ({item.type})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {combatPreview ? (
+                <div className="combat-preview">
+                  <h4>Combat Preview</h4>
+                  <div className="preview-row">
+                    <span>{selectedUnit!.name} attacks:</span>
+                    <span>{combatPreview.baseAttackerDamage} dmg {combatPreview.doubles ? '(x2)' : ''}</span>
+                    <span>HP: {hoveredUnit.stats.hp} → {combatPreview.defenderRemainingHp}</span>
+                  </div>
+                  {combatPreview.canCounter ? (
+                    <div className="preview-row">
+                      <span>{hoveredUnit.name} counters:</span>
+                      <span>{combatPreview.defenderDamage} dmg</span>
+                      <span>HP: {selectedUnit!.stats.hp} → {combatPreview.attackerRemainingHp}</span>
+                    </div>
+                  ) : (
+                    <div className="preview-row">
+                      <span>{hoveredUnit.name} cannot counter</span>
+                    </div>
+                  )}
+                  <div className="preview-row">
+                    <span>Hit: {combatPreview.hitChance}%</span>
+                    <span>Crit: {combatPreview.critChance}%</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="muted">Hover a unit to inspect it.</p>
+          )}
         </section>
       </div>
     </AppShell>
@@ -681,8 +762,11 @@ function BattleLog({ logs }: { logs: GameSnapshot["logs"] }) {
     <section className="panel log-panel">
       <h3>Battle Log</h3>
       <div className="log-list">
-        {logs.map((log) => (
-          <div key={log.id} className="log-entry">
+        {logs.map((log, index) => (
+          <div
+            key={log.id}
+            className={`log-entry${index === 0 ? " newest" : ""}`}
+          >
             {log.text}
           </div>
         ))}

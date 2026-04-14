@@ -4,6 +4,9 @@ import { createServer } from "node:http";
 import { Server } from "socket.io";
 import {
   calculateDamage,
+  calculateHitChance,
+  calculateCritChance,
+  checkIfDoubles,
   CLASS_TEMPLATES,
   getPortraitForUnit,
   getTerrainDefense,
@@ -13,13 +16,17 @@ import {
   type CombatLogEntry,
   type GameMap,
   type GameState,
+  type Item,
   type JoinRoomResponse,
   type PlayerPresence,
   type Position,
   type ServerToClientEvents,
   type TerrainTile,
   type Unit,
-  type UnitClass
+  type UnitClass,
+  type Weapon,
+  WEAPONS,
+  ITEMS
 } from "../../shared/game.js";
 import { createId, hashPassword, readBearerToken, verifyPassword } from "./auth.js";
 import {
@@ -238,7 +245,7 @@ function makeTile(type: TerrainTile["type"]): TerrainTile {
       return { type, moveCost: 2, defense: 1, avoid: 20 };
     case "fort":
       return { type, moveCost: 2, defense: 2, avoid: 15 };
-    case "wall":
+    case "mountain":
       return { type, moveCost: 99, defense: 0, avoid: 0 };
     case "goal":
       return { type, moveCost: 1, defense: 0, avoid: 0 };
@@ -250,12 +257,12 @@ function makeTile(type: TerrainTile["type"]): TerrainTile {
 function createMap(): GameMap {
   const layout = [
     ["grass", "grass", "forest", "grass", "grass", "forest", "grass", "goal"],
-    ["grass", "wall", "wall", "grass", "forest", "grass", "grass", "grass"],
-    ["fort", "grass", "grass", "grass", "grass", "forest", "wall", "grass"],
-    ["grass", "forest", "grass", "wall", "grass", "grass", "wall", "grass"],
-    ["grass", "grass", "grass", "wall", "grass", "forest", "grass", "grass"],
+    ["grass", "mountain", "mountain", "grass", "forest", "grass", "grass", "grass"],
+    ["fort", "grass", "grass", "grass", "grass", "forest", "mountain", "grass"],
+    ["grass", "forest", "grass", "mountain", "grass", "grass", "mountain", "grass"],
+    ["grass", "grass", "grass", "mountain", "grass", "forest", "grass", "grass"],
     ["grass", "forest", "grass", "grass", "grass", "grass", "grass", "fort"],
-    ["grass", "grass", "wall", "forest", "wall", "grass", "grass", "grass"],
+    ["grass", "grass", "mountain", "forest", "mountain", "grass", "grass", "grass"],
     ["grass", "grass", "grass", "grass", "grass", "grass", "grass", "grass"]
   ] as const;
 
@@ -324,6 +331,16 @@ async function emitState(room: Room) {
   io.to(room.state.roomCode).emit("stateUpdated", clone(room.state));
 }
 
+function migrateUnit(unit: any): Unit {
+  if (!unit.inventory) {
+    unit.inventory = { weapons: [], items: [] };
+  }
+  if (unit.equippedWeapon === undefined) {
+    unit.equippedWeapon = null;
+  }
+  return unit as Unit;
+}
+
 async function getOrLoadRoom(roomCode: string) {
   const normalizedCode = roomCode.toUpperCase();
   const existing = rooms.get(normalizedCode);
@@ -335,6 +352,9 @@ async function getOrLoadRoom(roomCode: string) {
   if (!persistedState) {
     return null;
   }
+
+  // Migrate units to add missing properties
+  persistedState.units = persistedState.units.map(migrateUnit);
 
   const room: Room = {
     state: persistedState,
@@ -394,7 +414,7 @@ function movementRange(state: GameState, unit: Unit) {
         continue;
       }
       const tile = getTile(state.map, next);
-      if (!tile || tile.type === "wall") {
+      if (!tile || tile.type === "mountain") {
         continue;
       }
       const occupant = unitAt(state, next);
@@ -470,6 +490,26 @@ function seededEnemyStats(className: UnitClass) {
   return base;
 }
 
+function getWeaponsForClass(className: UnitClass): Weapon[] {
+  switch (className) {
+    case "Lord":
+    case "Mercenary":
+      return WEAPONS.filter(w => w.type === "Sword").slice(0, 2);
+    case "Knight":
+      return WEAPONS.filter(w => w.type === "Lance").slice(0, 2);
+    case "Brigand":
+      return WEAPONS.filter(w => w.type === "Axe").slice(0, 2);
+    case "Archer":
+      return WEAPONS.filter(w => w.type === "Bow").slice(0, 2);
+    case "Mage":
+      return WEAPONS.filter(w => w.type === "Magic Tome").slice(0, 2);
+    case "Cleric":
+      return WEAPONS.filter(w => w.type === "Staff").slice(0, 2);
+    default:
+      return [];
+  }
+}
+
 function spawnUnits(state: GameState) {
   const playerUnits: Unit[] = state.characterDrafts.map((draft, index) => {
     const position = state.map.playerStarts[index] ?? { x: 0, y: 7 - index };
@@ -487,7 +527,12 @@ function spawnUnits(state: GameState) {
       moved: false,
       level: 1,
       exp: 0,
-      alive: true
+      alive: true,
+      inventory: {
+        weapons: getWeaponsForClass(draft.className),
+        items: [ITEMS[0]] // potion
+      },
+      equippedWeapon: null
     };
   });
 
@@ -510,7 +555,12 @@ function spawnUnits(state: GameState) {
     moved: false,
     level: 1,
     exp: 0,
-    alive: true
+    alive: true,
+    inventory: {
+      weapons: getWeaponsForClass(enemy.className),
+      items: []
+    },
+    equippedWeapon: getWeaponsForClass(enemy.className)[0] || null // equip first weapon
   }));
 
   state.units = [...playerUnits, ...enemyUnits];
@@ -530,12 +580,34 @@ function resetBattleState(state: GameState) {
 
 function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   const defenderTerrainDefense = getTerrainDefense(state.map, defender.position);
-  const damage = calculateDamage(attacker, defender, defenderTerrainDefense);
-  defender.stats.hp = Math.max(0, defender.stats.hp - damage);
-  attacker.acted = true;
-  state.selectedUnitId = null;
-  state.highlights = [];
-  pushLog(state, `${attacker.name} hit ${defender.name} for ${damage} damage.`);
+  const attackerTerrainDefense = getTerrainDefense(state.map, attacker.position);
+
+  // Determine number of attacks
+  let attackerAttacks = 1;
+  let defenderAttacks = 1;
+  if (checkIfDoubles(attacker, defender)) {
+    attackerAttacks = 2;
+  } else if (checkIfDoubles(defender, attacker)) {
+    defenderAttacks = 2;
+  }
+
+  // Attacker's attacks
+  for (let i = 0; i < attackerAttacks && defender.stats.hp > 0; i++) {
+    const hitChance = calculateHitChance(attacker, defender);
+    const hitRoll = Math.random() * 100;
+    if (hitRoll < hitChance) {
+      const critChance = calculateCritChance(attacker, defender);
+      const critRoll = Math.random() * 100;
+      const isCrit = critRoll < critChance;
+      const baseDamage = calculateDamage(attacker, defender, defenderTerrainDefense);
+      const damage = isCrit ? baseDamage * 2 : baseDamage;
+      defender.stats.hp = Math.max(0, defender.stats.hp - damage);
+      const critText = isCrit ? " (critical!)" : "";
+      pushLog(state, `${attacker.name} hit ${defender.name} for ${damage} damage${critText}.`);
+    } else {
+      pushLog(state, `${attacker.name} missed ${defender.name}.`);
+    }
+  }
 
   if (defender.stats.hp === 0) {
     defender.alive = false;
@@ -544,18 +616,35 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
       attacker.exp += 30;
     }
   } else {
+    // Defender's counterattacks
     const retaliateDistance = distance(attacker.position, defender.position);
     if (retaliateDistance <= defender.stats.range) {
-      const attackerTerrainDefense = getTerrainDefense(state.map, attacker.position);
-      const counterDamage = calculateDamage(defender, attacker, attackerTerrainDefense);
-      attacker.stats.hp = Math.max(0, attacker.stats.hp - counterDamage);
-      pushLog(state, `${defender.name} countered for ${counterDamage}.`);
+      for (let i = 0; i < defenderAttacks && attacker.stats.hp > 0; i++) {
+        const hitChance = calculateHitChance(defender, attacker);
+        const hitRoll = Math.random() * 100;
+        if (hitRoll < hitChance) {
+          const critChance = calculateCritChance(defender, attacker);
+          const critRoll = Math.random() * 100;
+          const isCrit = critRoll < critChance;
+          const baseDamage = calculateDamage(defender, attacker, attackerTerrainDefense);
+          const damage = isCrit ? baseDamage * 2 : baseDamage;
+          attacker.stats.hp = Math.max(0, attacker.stats.hp - damage);
+          const critText = isCrit ? " (critical!)" : "";
+          pushLog(state, `${defender.name} countered for ${damage}${critText}.`);
+        } else {
+          pushLog(state, `${defender.name} missed ${attacker.name}.`);
+        }
+      }
       if (attacker.stats.hp === 0) {
         attacker.alive = false;
         pushLog(state, `${attacker.name} fell in battle.`);
       }
     }
   }
+
+  attacker.acted = true;
+  state.selectedUnitId = null;
+  state.highlights = [];
 }
 
 function checkWinState(state: GameState) {
@@ -876,6 +965,55 @@ io.on("connection", (socket) => {
     room.state.highlights = movementRange(room.state, unit);
     room.state.activePlayerId = playerId;
     pushLog(room.state, `${unit.name} canceled their move.`);
+    await emitState(room);
+  });
+
+  socket.on("equipWeapon", async ({ roomCode, unitId, weaponId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      return;
+    }
+    const unit = findUnit(room.state, unitId);
+    if (!unit || !canControlUnit(room.state, playerId, unit)) {
+      return;
+    }
+    if (weaponId === null) {
+      unit.equippedWeapon = null;
+    } else {
+      const weapon = unit.inventory.weapons.find(w => w.id === weaponId);
+      if (!weapon) {
+        return;
+      }
+      unit.equippedWeapon = weapon;
+    }
+    await emitState(room);
+  });
+
+  socket.on("useItem", async ({ roomCode, unitId, itemId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      return;
+    }
+    const unit = findUnit(room.state, unitId);
+    if (!unit || unit.acted || !canControlUnit(room.state, playerId, unit)) {
+      return;
+    }
+    const itemIndex = unit.inventory.items.findIndex(i => i.id === itemId);
+    if (itemIndex === -1) {
+      return;
+    }
+    const item = unit.inventory.items[itemIndex];
+    if (item.type === "Potion") {
+      unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + 10);
+      pushLog(room.state, `${unit.name} used a potion and recovered 10 HP.`);
+      unit.inventory.items.splice(itemIndex, 1);
+      unit.acted = true;
+      room.state.selectedUnitId = null;
+      room.state.highlights = [];
+      if (allPlayerUnitsActed(room.state)) {
+        await takeEnemyPhase(room);
+      }
+    }
     await emitState(room);
   });
 

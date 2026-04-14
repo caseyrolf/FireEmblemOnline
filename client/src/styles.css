@@ -53,6 +53,41 @@ button:disabled {
   transform: none;
 }
 
+button.small-button {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.selected-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.5rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.selected-card > div {
+  margin-bottom: 0.5rem;
+}
+
+.turn-actions {
+  margin-top: 0.5rem;
+}
+
+.selected-card h4 {
+  margin: 0.5rem 0 0.3rem 0;
+}
+
+.unit-stats > * {
+  display: block;
+}
+
 input,
 select {
   width: 100%;
@@ -64,7 +99,7 @@ select {
 }
 
 .app-shell {
-  max-width: 1320px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 2rem;
 }
@@ -76,7 +111,7 @@ select {
 .hero h1,
 .room-header h2 {
   margin: 0.2rem 0;
-  font-size: clamp(2.2rem, 5vw, 4.2rem);
+  font-size: clamp(1.2rem, 2.5vw, 2.2rem);
   letter-spacing: 0.04em;
 }
 
@@ -120,17 +155,12 @@ select {
 }
 
 .battle-layout {
-  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+  grid-template-columns: 0.5fr 1.5fr 0.8fr 0.8fr;
   align-items: start;
+  max-height: 70vh;
 }
 
-.stack {
-  display: grid;
-  gap: 1rem;
-}
-
-.auth-panel,
-.room-header {
+.auth-panel {
   max-width: 760px;
 }
 
@@ -187,6 +217,40 @@ select {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.log-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.log-entry {
+  padding: 0.85rem 1rem;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+}
+
+.log-entry.newest {
+  animation: log-entry-highlight 1s ease-out;
+}
+
+@keyframes log-entry-highlight {
+  0% {
+    border-color: var(--accent-strong);
+    box-shadow: 0 0 12px rgba(240, 191, 99, 0.6), 0 0 24px rgba(240, 191, 99, 0.3);
+    background: rgba(240, 191, 99, 0.08);
+  }
+  50% {
+    border-color: var(--accent-strong);
+    box-shadow: 0 0 18px rgba(240, 191, 99, 0.8), 0 0 36px rgba(240, 191, 99, 0.4);
+    background: rgba(240, 191, 99, 0.12);
+  }
+  100% {
+    border-color: transparent;
+    box-shadow: 0 0 0 transparent;
+    background: rgba(255, 255, 255, 0.04);
+  }
 }
 
 .combat-preview h4 {
@@ -331,8 +395,23 @@ select {
 
 .unit-chip-main {
   display: flex;
-  justify-content: space-between;
-  gap: 0.25rem;
+  flex-direction: row;
+  gap: 0.1rem;
+  align-items: center;
+}
+
+.unit-chip-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+}
+
+.unit-chip-image {
+  width: 1.75rem;
+  height: 1.75rem;
+  object-fit: cover;
+  border-radius: 2px;
 }
 
 .health-bar {
@@ -350,7 +429,7 @@ select {
 }
 
 .detail-health-bar {
-  margin: 0.35rem 0 0.75rem;
+  margin: 0.2rem 0 0.4rem;
 }
 
 .unit-chip.player {
@@ -367,6 +446,8 @@ select {
 
 .log-panel {
   min-height: 280px;
+  max-height: 100%;
+  overflow: auto;
 }
 
 .log-list {
