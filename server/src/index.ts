@@ -223,7 +223,7 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
 
 const rooms = new Map<string, Room>();
 const PLAYER_LIMIT = 8;
-const CHARACTER_LIMIT = 2;
+const CHARACTER_LIMIT = 8;
 const SESSION_LENGTH_MS = 1000 * 60 * 60 * 24 * 30;
 
 function createRoomCode() {
@@ -254,35 +254,69 @@ function makeTile(type: TerrainTile["type"]): TerrainTile {
   }
 }
 
-function createMap(): GameMap {
-  const layout = [
-    ["grass", "grass", "forest", "grass", "grass", "forest", "grass", "goal"],
-    ["grass", "mountain", "mountain", "grass", "forest", "grass", "grass", "grass"],
-    ["fort", "grass", "grass", "grass", "grass", "forest", "mountain", "grass"],
-    ["grass", "forest", "grass", "mountain", "grass", "grass", "mountain", "grass"],
-    ["grass", "grass", "grass", "mountain", "grass", "forest", "grass", "grass"],
-    ["grass", "forest", "grass", "grass", "grass", "grass", "grass", "fort"],
-    ["grass", "grass", "mountain", "forest", "mountain", "grass", "grass", "grass"],
-    ["grass", "grass", "grass", "grass", "grass", "grass", "grass", "grass"]
-  ] as const;
+function createMap(chapter: number = 1): GameMap {
+  if (chapter === 1) {
+    const layout = [
+      ["grass", "grass", "forest", "grass", "grass", "forest", "grass", "goal"],
+      ["grass", "mountain", "mountain", "grass", "forest", "grass", "grass", "grass"],
+      ["fort", "grass", "grass", "grass", "grass", "forest", "mountain", "grass"],
+      ["grass", "forest", "grass", "mountain", "grass", "grass", "mountain", "grass"],
+      ["grass", "grass", "grass", "mountain", "grass", "forest", "grass", "grass"],
+      ["grass", "forest", "grass", "grass", "grass", "grass", "grass", "fort"],
+      ["grass", "grass", "mountain", "forest", "mountain", "grass", "grass", "grass"],
+      ["grass", "grass", "grass", "grass", "grass", "grass", "grass", "grass"]
+    ] as const;
 
-  return {
-    width: 8,
-    height: 8,
-    tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
-    playerStarts: [
-      { x: 0, y: 7 },
-      { x: 1, y: 7 },
-      { x: 2, y: 7 },
-      { x: 0, y: 6 },
-      { x: 1, y: 6 },
-      { x: 2, y: 5 }
-    ],
-    objective: {
-      type: "route",
-      target: { x: 7, y: 0 }
-    }
-  };
+    return {
+      width: 8,
+      height: 8,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 0, y: 7 },
+        { x: 1, y: 7 },
+        { x: 2, y: 7 },
+        { x: 0, y: 6 },
+        { x: 1, y: 6 },
+        { x: 2, y: 5 }
+      ],
+      objective: {
+        type: "route",
+        target: { x: 7, y: 0 }
+      }
+    };
+  } else if (chapter === 2) {
+    // Chapter 2 map - different layout
+    const layout = [
+      ["grass", "forest", "grass", "mountain", "grass", "grass", "fort", "goal"],
+      ["grass", "grass", "grass", "grass", "forest", "mountain", "grass", "grass"],
+      ["fort", "grass", "mountain", "grass", "grass", "grass", "forest", "grass"],
+      ["grass", "forest", "grass", "grass", "mountain", "grass", "grass", "grass"],
+      ["grass", "grass", "grass", "forest", "grass", "grass", "mountain", "grass"],
+      ["grass", "mountain", "grass", "grass", "grass", "forest", "grass", "fort"],
+      ["grass", "grass", "forest", "mountain", "grass", "grass", "grass", "grass"],
+      ["grass", "grass", "grass", "grass", "grass", "grass", "grass", "grass"]
+    ] as const;
+
+    return {
+      width: 8,
+      height: 8,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 0, y: 7 },
+        { x: 1, y: 7 },
+        { x: 2, y: 7 },
+        { x: 0, y: 6 },
+        { x: 1, y: 6 },
+        { x: 2, y: 5 }
+      ],
+      objective: {
+        type: "route",
+        target: { x: 7, y: 0 }
+      }
+    };
+  }
+  // Default to chapter 1
+  return createMap(1);
 }
 
 function cryptoRandomId() {
@@ -297,15 +331,16 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     phase: "player",
     turnCount: 1,
     activePlayerId: null,
-    players: [{ id: hostId, name: hostName, connected: true, isHost: true }],
+    players: [{ id: hostId, name: hostName, connected: true, isHost: true, gold: 0 }],
     characterDrafts: [],
-    map: createMap(),
+    map: createMap(1),
     units: [],
     selectedUnitId: null,
     highlights: [],
     logs: [{ id: cryptoRandomId(), text: `${hostName} opened room ${roomCode}.` }],
     winner: null,
-    outcomeRecorded: false
+    outcomeRecorded: false,
+    chapter: 1
   };
 }
 
@@ -341,6 +376,13 @@ function migrateUnit(unit: any): Unit {
   return unit as Unit;
 }
 
+function migratePlayer(player: any): PlayerPresence {
+  if (player.gold === undefined) {
+    player.gold = 0;
+  }
+  return player as PlayerPresence;
+}
+
 async function getOrLoadRoom(roomCode: string) {
   const normalizedCode = roomCode.toUpperCase();
   const existing = rooms.get(normalizedCode);
@@ -355,6 +397,12 @@ async function getOrLoadRoom(roomCode: string) {
 
   // Migrate units to add missing properties
   persistedState.units = persistedState.units.map(migrateUnit);
+  // Migrate players to add missing properties
+  persistedState.players = persistedState.players.map(migratePlayer);
+  // Add chapter if missing
+  if (!persistedState.chapter) {
+    persistedState.chapter = 1;
+  }
 
   const room: Room = {
     state: persistedState,
@@ -419,7 +467,9 @@ function movementRange(state: GameState, unit: Unit) {
       }
       const occupant = unitAt(state, next);
       if (occupant && occupant.id !== unit.id) {
-        continue;
+        if (occupant.team !== unit.team) {
+          continue;
+        }
       }
       const nextCost = current.cost + tile.moveCost;
       if (nextCost > unit.stats.mov) {
@@ -431,7 +481,9 @@ function movementRange(state: GameState, unit: Unit) {
         continue;
       }
       bestCost.set(key, nextCost);
-      reachable.push(next);
+      if (!occupant || occupant.id === unit.id) {
+        reachable.push(next);
+      }
       frontier.push({ position: next, cost: nextCost });
     }
   }
@@ -481,12 +533,17 @@ function distance(a: Position, b: Position) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function seededEnemyStats(className: UnitClass) {
+function seededEnemyStats(className: UnitClass, level: number = 1) {
   const base = clone(CLASS_TEMPLATES[className]);
-  base.hp += 4;
-  base.maxHp += 4;
-  base.str += 1;
-  base.mag += 1;
+  const levelBonus = level - 1;
+  base.hp += 4 + levelBonus * 2;
+  base.maxHp += 4 + levelBonus * 2;
+  base.str += 1 + levelBonus;
+  base.mag += 1 + levelBonus;
+  base.skl += levelBonus;
+  base.spd += levelBonus;
+  base.def += levelBonus;
+  base.res += levelBonus;
   return base;
 }
 
@@ -532,15 +589,25 @@ function spawnUnits(state: GameState) {
         weapons: getWeaponsForClass(draft.className),
         items: [ITEMS[0]] // potion
       },
-      equippedWeapon: null
+      equippedWeapon: getWeaponsForClass(draft.className)[0] || null // equip first weapon
     };
   });
 
-  const enemies: Array<{ name: string; className: UnitClass; position: Position }> = [
-    { name: "Bandit Axer", className: "Brigand", position: { x: 6, y: 1 } },
-    { name: "Outlaw Shot", className: "Archer", position: { x: 7, y: 2 } },
-    { name: "Fort Guard", className: "Knight", position: { x: 5, y: 5 } }
-  ];
+  let enemies: Array<{ name: string; className: UnitClass; position: Position }> = [];
+  if (state.chapter === 1) {
+    enemies = [
+      { name: "Bandit Axer", className: "Brigand", position: { x: 6, y: 1 } },
+      { name: "Outlaw Shot", className: "Archer", position: { x: 7, y: 2 } },
+      { name: "Fort Guard", className: "Knight", position: { x: 5, y: 5 } }
+    ];
+  } else if (state.chapter === 2) {
+    enemies = [
+      { name: "Veteran Brigand", className: "Brigand", position: { x: 6, y: 1 } },
+      { name: "Elite Archer", className: "Archer", position: { x: 7, y: 2 } },
+      { name: "Armored Knight", className: "Knight", position: { x: 5, y: 5 } },
+      { name: "Dark Mage", className: "Mage", position: { x: 4, y: 3 } }
+    ];
+  }
 
   const enemyUnits: Unit[] = enemies.map((enemy) => ({
     id: cryptoRandomId(),
@@ -550,10 +617,10 @@ function spawnUnits(state: GameState) {
     portraitUrl: getPortraitForUnit("enemy", enemy.className),
     position: enemy.position,
     originalPosition: { ...enemy.position },
-    stats: seededEnemyStats(enemy.className),
+    stats: seededEnemyStats(enemy.className, state.chapter),
     acted: false,
     moved: false,
-    level: 1,
+    level: state.chapter,
     exp: 0,
     alive: true,
     inventory: {
@@ -575,6 +642,7 @@ function resetBattleState(state: GameState) {
   state.highlights = [];
   state.winner = null;
   state.outcomeRecorded = false;
+  state.map = createMap(state.chapter);
   spawnUnits(state);
 }
 
@@ -647,15 +715,38 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   state.highlights = [];
 }
 
+function resolveHeal(state: GameState, healer: Unit, target: Unit) {
+  let healAmount = healer.stats.mag;
+  if (healer.equippedWeapon && healer.equippedWeapon.type === "Staff") {
+    healAmount += healer.equippedWeapon.might;
+  }
+  const actualHeal = Math.min(healAmount, target.stats.maxHp - target.stats.hp);
+  target.stats.hp = Math.min(target.stats.maxHp, target.stats.hp + actualHeal);
+  pushLog(state, `${healer.name} healed ${target.name} for ${actualHeal} HP.`);
+}
+
 function checkWinState(state: GameState) {
   const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
   const livingEnemies = state.units.filter((unit) => unit.team === "enemy" && unit.alive);
 
   if (livingEnemies.length === 0) {
-    state.phase = "victory";
-    state.status = "complete";
-    state.winner = "player";
-    pushLog(state, "The squad cleared the map.");
+    if (state.chapter === 1) {
+      // Chapter 1 completed - go to base camp
+      state.phase = "basecamp";
+      state.status = "battle"; // Keep battle status for base camp
+      pushLog(state, "Chapter 1 cleared! The party arrives at the base camp.");
+      // Give gold to all players
+      for (const player of state.players) {
+        player.gold += 1000;
+      }
+      pushLog(state, "Each player receives 1000 gold!");
+    } else {
+      // Final victory
+      state.phase = "victory";
+      state.status = "complete";
+      state.winner = "player";
+      pushLog(state, "The squad cleared the final chapter.");
+    }
   } else if (livingPlayers.length === 0) {
     state.phase = "defeat";
     state.status = "complete";
@@ -700,7 +791,7 @@ async function takeEnemyPhase(room: Room) {
   }
 
   checkWinState(state);
-  if (state.status !== "complete") {
+  if (state.status !== "complete" && state.phase !== "basecamp") {
     state.phase = "player";
     state.turnCount += 1;
     resetPlayerActions(state);
@@ -792,7 +883,8 @@ io.on("connection", (socket) => {
       name: trimmedName,
       connected: true,
       isHost: false,
-      userId
+      userId,
+      gold: 0
     };
     room.state.players.push(player);
     room.sockets.set(playerId, socket.id);
@@ -931,6 +1023,35 @@ io.on("connection", (socket) => {
     await emitState(room);
   });
 
+  socket.on("healUnit", async ({ roomCode, healerId, targetId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      return;
+    }
+    const healer = findUnit(room.state, healerId);
+    const target = findUnit(room.state, targetId);
+    if (!healer || !target || healer.acted || !canControlUnit(room.state, playerId, healer)) {
+      return;
+    }
+    if (healer.className !== "Cleric" || target.team !== "player") {
+      io.to(socket.id).emit("errorMessage", "Only clerics can heal allied units.");
+      return;
+    }
+    const distance = Math.abs(healer.position.x - target.position.x) + Math.abs(healer.position.y - target.position.y);
+    if (distance > healer.stats.range) {
+      io.to(socket.id).emit("errorMessage", "Target is out of range.");
+      return;
+    }
+    resolveHeal(room.state, healer, target);
+    healer.acted = true;
+    room.state.selectedUnitId = null;
+    room.state.highlights = [];
+    if (allPlayerUnitsActed(room.state)) {
+      await takeEnemyPhase(room);
+    }
+    await emitState(room);
+  });
+
   socket.on("waitUnit", async ({ roomCode, unitId }) => {
     const room = await ensureRoom(socket.id, roomCode);
     if (!room || !playerId) {
@@ -1041,6 +1162,68 @@ io.on("connection", (socket) => {
     }
     resetBattleState(room.state);
     pushLog(room.state, "The DM restarted the map.");
+    await emitState(room);
+  });
+
+  socket.on("buyWeapon", async ({ roomCode, playerId: buyerId, weaponId, unitId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || room.state.phase !== "basecamp" || playerId !== buyerId) {
+      return;
+    }
+    const player = findPlayer(room.state, buyerId);
+    const unit = findUnit(room.state, unitId);
+    const weapon = WEAPONS.find(w => w.id === weaponId);
+    if (!player || !unit || !weapon || !weapon.price || player.gold < weapon.price || unit.ownerId !== buyerId) {
+      io.to(socket.id).emit("errorMessage", "Cannot purchase this weapon.");
+      return;
+    }
+    player.gold -= weapon.price;
+    unit.inventory.weapons.push(weapon);
+    pushLog(room.state, `${player.name} bought a ${weapon.name} for ${unit.name}.`);
+    await emitState(room);
+  });
+
+  socket.on("buyItem", async ({ roomCode, playerId: buyerId, itemId, unitId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || room.state.phase !== "basecamp" || playerId !== buyerId) {
+      return;
+    }
+    const player = findPlayer(room.state, buyerId);
+    const unit = findUnit(room.state, unitId);
+    const item = ITEMS.find(i => i.id === itemId);
+    if (!player || !unit || !item || !item.price || player.gold < item.price || unit.ownerId !== buyerId) {
+      io.to(socket.id).emit("errorMessage", "Cannot purchase this item.");
+      return;
+    }
+    player.gold -= item.price;
+    unit.inventory.items.push(item);
+    pushLog(room.state, `${player.name} bought a ${item.name} for ${unit.name}.`);
+    await emitState(room);
+  });
+
+  socket.on("advanceToChapter", async ({ roomCode }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || room.state.phase !== "basecamp" || room.state.hostId !== playerId) {
+      return;
+    }
+    room.state.chapter += 1;
+    resetBattleState(room.state);
+    pushLog(room.state, `The DM advanced to Chapter ${room.state.chapter}.`);
+    await emitState(room);
+  });
+
+  socket.on("endGame", async ({ roomCode }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || room.state.hostId !== playerId) {
+      return;
+    }
+    if (room.state.status === "complete") {
+      return;
+    }
+    room.state.status = "complete";
+    room.state.phase = "defeat";
+    room.state.winner = "enemy";
+    pushLog(room.state, "The DM ended the game.");
     await emitState(room);
   });
 

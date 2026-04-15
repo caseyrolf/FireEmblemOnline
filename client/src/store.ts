@@ -47,12 +47,18 @@ type AppStore = {
   selectUnit: (unitId: string) => void;
   moveUnit: (unitId: string, x: number, y: number) => void;
   attackUnit: (attackerId: string, targetId: string) => void;
+  healUnit: (healerId: string, targetId: string) => void;
   waitUnit: (unitId: string) => void;
   cancelMove: (unitId: string) => void;
   equipWeapon: (unitId: string, weaponId: string | null) => void;
   useItem: (unitId: string, itemId: string) => void;
   endTurn: () => void;
   restartMap: () => void;
+  endGame: () => void;
+  buyWeapon: (playerId: string, weaponId: string, unitId: string) => void;
+  buyItem: (playerId: string, itemId: string, unitId: string) => void;
+  advanceToChapter: () => void;
+  removeActiveGame: (roomCode: string) => Promise<void>;
   clearAttackAnimation: () => void;
   refreshProfileCharacters: () => Promise<void>;
   refreshActiveGames: () => Promise<void>;
@@ -370,6 +376,30 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ state: null, playerId: null, view: "home" });
     await get().refreshActiveGames();
   },
+  endGame: () => {
+    const roomCode = get().state?.roomCode;
+    if (!roomCode) {
+      return;
+    }
+    get().socket?.emit("endGame", { roomCode });
+  },
+  removeActiveGame: async (roomCode) => {
+    const token = get().authToken;
+    if (!token) {
+      return;
+    }
+    try {
+      await apiRequest(`/api/profile/games/${roomCode}`, { method: "DELETE" }, token);
+      const saved = readSavedSession();
+      if (saved?.roomCode === roomCode) {
+        clearSavedSession();
+      }
+      await get().refreshActiveGames();
+      set({ error: null });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not remove active game." });
+    }
+  },
   createCharacter: (name, className, portraitUrl) => {
     const roomCode = get().state?.roomCode;
     if (roomCode) {
@@ -402,6 +432,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         set({ attackingUnitId: attackerId });
       }
       get().socket?.emit("attackUnit", { roomCode, attackerId, targetId });
+    }
+  },
+  healUnit: (healerId, targetId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("healUnit", { roomCode, healerId, targetId });
     }
   },
   waitUnit: (unitId) => {
@@ -438,6 +474,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const roomCode = get().state?.roomCode;
     if (roomCode) {
       get().socket?.emit("restartMap", { roomCode });
+    }
+  },
+  buyWeapon: (playerId, weaponId, unitId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("buyWeapon", { roomCode, playerId, weaponId, unitId });
+    }
+  },
+  buyItem: (playerId, itemId, unitId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("buyItem", { roomCode, playerId, itemId, unitId });
+    }
+  },
+  advanceToChapter: () => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("advanceToChapter", { roomCode });
     }
   },
   refreshProfileCharacters: async () => {

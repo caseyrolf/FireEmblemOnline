@@ -1,7 +1,7 @@
 export type TerrainType = "grass" | "forest" | "fort" | "mountain" | "goal";
 export type UnitTeam = "player" | "enemy";
 export type UnitClass = "Lord" | "Mercenary" | "Mage" | "Cleric" | "Knight" | "Brigand" | "Archer";
-export type TurnPhase = "player" | "enemy" | "victory" | "defeat";
+export type TurnPhase = "player" | "enemy" | "victory" | "defeat" | "basecamp";
 
 export type WeaponType = "Sword" | "Lance" | "Axe" | "Bow" | "Magic Tome" | "Staff";
 export type ItemType = "Potion";
@@ -11,12 +11,14 @@ export type Weapon = {
   name: string;
   type: WeaponType;
   might: number;
+  price?: number;
 };
 
 export type Item = {
   id: string;
   name: string;
   type: ItemType;
+  price?: number;
 };
 
 export type Position = {
@@ -72,6 +74,7 @@ export type PlayerPresence = {
   connected: boolean;
   isHost: boolean;
   userId?: string;
+  gold: number;
 };
 
 export type CharacterDraft = {
@@ -114,6 +117,7 @@ export type GameState = {
   logs: CombatLogEntry[];
   winner: UnitTeam | null;
   outcomeRecorded: boolean;
+  chapter: number;
 };
 
 export type ServerToClientEvents = {
@@ -133,12 +137,17 @@ export type ClientToServerEvents = {
   selectUnit: (payload: { roomCode: string; unitId: string }) => void;
   moveUnit: (payload: { roomCode: string; unitId: string; position: Position }) => void;
   attackUnit: (payload: { roomCode: string; attackerId: string; targetId: string }) => void;
+  healUnit: (payload: { roomCode: string; healerId: string; targetId: string }) => void;
   waitUnit: (payload: { roomCode: string; unitId: string }) => void;
   cancelMove: (payload: { roomCode: string; unitId: string }) => void;
   equipWeapon: (payload: { roomCode: string; unitId: string; weaponId: string | null }) => void;
   useItem: (payload: { roomCode: string; unitId: string; itemId: string }) => void;
   endTurn: (payload: { roomCode: string }) => void;
   restartMap: (payload: { roomCode: string }) => void;
+  endGame: (payload: { roomCode: string }) => void;
+  buyWeapon: (payload: { roomCode: string; playerId: string; weaponId: string; unitId: string }) => void;
+  buyItem: (payload: { roomCode: string; playerId: string; itemId: string; unitId: string }) => void;
+  advanceToChapter: (payload: { roomCode: string }) => void;
   leaveRoom: (payload: { roomCode: string }, callback: (response: { ok: boolean }) => void) => void;
 };
 
@@ -190,22 +199,22 @@ export const CLASS_TEMPLATES: Record<UnitClass, Stats> = {
 export const CLASS_OPTIONS = Object.keys(CLASS_TEMPLATES) as UnitClass[];
 
 export const WEAPONS: Weapon[] = [
-  { id: "iron-sword", name: "Iron Sword", type: "Sword", might: 5 },
-  { id: "steel-sword", name: "Steel Sword", type: "Sword", might: 8 },
-  { id: "iron-lance", name: "Iron Lance", type: "Lance", might: 5 },
-  { id: "steel-lance", name: "Steel Lance", type: "Lance", might: 8 },
-  { id: "iron-axe", name: "Iron Axe", type: "Axe", might: 5 },
-  { id: "steel-axe", name: "Steel Axe", type: "Axe", might: 8 },
-  { id: "iron-bow", name: "Iron Bow", type: "Bow", might: 5 },
-  { id: "steel-bow", name: "Steel Bow", type: "Bow", might: 8 },
-  { id: "fire-tome", name: "Fire Tome", type: "Magic Tome", might: 5 },
-  { id: "thunder-tome", name: "Thunder Tome", type: "Magic Tome", might: 8 },
-  { id: "heal-staff", name: "Heal Staff", type: "Staff", might: 0 },
-  { id: "mend-staff", name: "Mend Staff", type: "Staff", might: 0 },
+  { id: "iron-sword", name: "Iron Sword", type: "Sword", might: 5, price: 500 },
+  { id: "steel-sword", name: "Steel Sword", type: "Sword", might: 8, price: 1000 },
+  { id: "iron-lance", name: "Iron Lance", type: "Lance", might: 5, price: 500 },
+  { id: "steel-lance", name: "Steel Lance", type: "Lance", might: 8, price: 1000 },
+  { id: "iron-axe", name: "Iron Axe", type: "Axe", might: 5, price: 500 },
+  { id: "steel-axe", name: "Steel Axe", type: "Axe", might: 8, price: 1000 },
+  { id: "iron-bow", name: "Iron Bow", type: "Bow", might: 5, price: 500 },
+  { id: "steel-bow", name: "Steel Bow", type: "Bow", might: 8, price: 1000 },
+  { id: "fire-tome", name: "Fire Tome", type: "Magic Tome", might: 5, price: 500 },
+  { id: "thunder-tome", name: "Thunder Tome", type: "Magic Tome", might: 8, price: 1000 },
+  { id: "heal-staff", name: "Heal Staff", type: "Staff", might: 5, price: 500 },
+  { id: "mend-staff", name: "Mend Staff", type: "Staff", might: 10, price: 1000 },
 ];
 
 export const ITEMS: Item[] = [
-  { id: "potion", name: "Potion", type: "Potion" },
+  { id: "potion", name: "Potion", type: "Potion", price: 300 },
 ];
 
 export const TERRAIN_STYLE: Record<TerrainType, { label: string; color: string; icon: string }> = {

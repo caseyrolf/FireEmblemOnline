@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CLASS_OPTIONS, TERRAIN_STYLE, getDefaultPortrait, getClassImage, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath } from "../../shared/game";
+import { CLASS_OPTIONS, TERRAIN_STYLE, getDefaultPortrait, getClassImage, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -106,6 +106,7 @@ function LandingScreen() {
   const profileCharacters = useAppStore((store) => store.profileCharacters);
   const activeGames = useAppStore((store) => store.activeGames);
   const returnToGame = useAppStore((store) => store.returnToGame);
+  const removeActiveGame = useAppStore((store) => store.removeActiveGame);
   const deleteProfileCharacter = useAppStore((store) => store.deleteProfileCharacter);
   const error = useAppStore((store) => store.error);
   const clearError = useAppStore((store) => store.clearError);
@@ -159,7 +160,14 @@ function LandingScreen() {
                     {game.playerCount} players • Turn {game.turnCount}
                   </span>
                   <span>{game.objective}</span>
-                  <button onClick={() => void returnToGame(game)}>Return To Game</button>
+                  <div className="button-group">
+                    <button onClick={() => void returnToGame(game)}>Return To Game</button>
+                    {!game.isHost ? (
+                      <button className="secondary" onClick={() => void removeActiveGame(game.roomCode)}>
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ))
             ) : (
@@ -204,6 +212,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   const createCharacter = useAppStore((store) => store.createCharacter);
   const saveProfileCharacter = useAppStore((store) => store.saveProfileCharacter);
   const startBattle = useAppStore((store) => store.startBattle);
+  const endGame = useAppStore((store) => store.endGame);
   const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
   const [name, setName] = useState("");
   const [className, setClassName] = useState(CLASS_OPTIONS[0]);
@@ -243,9 +252,16 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
           <span>{authUser.displayName}</span>
           <span>{state.players.length} players</span>
           <span>{state.characterDrafts.length} heroes drafted</span>
-          <button className="secondary" onClick={() => void exitCurrentGame()}>
-            Exit Chapter View
-          </button>
+          <div className="button-group">
+            <button className="secondary" onClick={() => void exitCurrentGame()}>
+              Exit Chapter View
+            </button>
+            {isHost ? (
+              <button className="secondary" onClick={() => void endGame()}>
+                End Game
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
       <div className="layout lobby-layout">
@@ -391,11 +407,149 @@ function AttackAnimation() {
 }
 
 function unitCanAttack(unit: Unit, hoveredUnit: Unit | undefined) {
-  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "enemy") {
+  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "enemy" || unit.className === "Cleric") {
     return false;
   }
   const gap = Math.abs(unit.position.x - hoveredUnit.position.x) + Math.abs(unit.position.y - hoveredUnit.position.y);
   return gap <= unit.stats.range;
+}
+
+function unitCanHeal(unit: Unit, hoveredUnit: Unit | undefined) {
+  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "player" || unit.className !== "Cleric") {
+    return false;
+  }
+  const gap = Math.abs(unit.position.x - hoveredUnit.position.x) + Math.abs(unit.position.y - hoveredUnit.position.y);
+  return gap <= unit.stats.range;
+}
+
+function BaseCampScreen({ state }: { state: GameSnapshot }) {
+  const playerId = useAppStore((store) => store.playerId);
+  const buyWeapon = useAppStore((store) => store.buyWeapon);
+  const buyItem = useAppStore((store) => store.buyItem);
+  const advanceToChapter = useAppStore((store) => store.advanceToChapter);
+  const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
+  const isHost = state.hostId === playerId;
+
+  const player = state.players.find(p => p.id === playerId);
+  const playerUnits = state.units.filter(u => u.ownerId === playerId && u.alive);
+
+  return (
+    <AppShell>
+      <div className="room-header panel">
+        <div>
+          <p className="eyebrow">Base Camp</p>
+          <h2>Chapter {state.chapter} Complete</h2>
+          <p className="phase-label">PREPARING FOR NEXT CHAPTER</p>
+        </div>
+        <div className="room-meta">
+          <span>Room {state.roomCode}</span>
+          <span>Base Camp</span>
+          <button className="secondary" onClick={() => void exitCurrentGame()}>
+            Exit Chapter View
+          </button>
+        </div>
+      </div>
+      <div className="layout basecamp-layout">
+        <section className="panel">
+          <h3>Your Units</h3>
+          <div className="roster">
+            {playerUnits.map((unit) => (
+              <div key={unit.id} className="roster-card">
+                <img
+                  className="portrait-preview"
+                  src={unit.portraitUrl}
+                  alt={`${unit.name} portrait`}
+                />
+                <div className="roster-title">
+                  <strong>{unit.name}</strong>
+                  <span>{unit.className} Lv.{unit.level}</span>
+                </div>
+                <div>
+                  <strong>HP:</strong> {unit.stats.hp}/{unit.stats.maxHp}
+                </div>
+                <div>
+                  <strong>Inventory:</strong>
+                  <ul>
+                    {unit.inventory.weapons.map((weapon) => (
+                      <li key={weapon.id}>{weapon.name} ({weapon.might})</li>
+                    ))}
+                    {unit.inventory.items.map((item) => (
+                      <li key={item.id}>{item.name}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="panel">
+          <h3>Shop</h3>
+          <div>
+            <strong>Your Gold: {player?.gold ?? 0}</strong>
+          </div>
+          <div className="shop-section">
+            <h4>Weapons</h4>
+            <div className="shop-items">
+              {WEAPONS.filter(w => w.price).map((weapon) => (
+                <div key={weapon.id} className="shop-item">
+                  <div>
+                    <strong>{weapon.name}</strong> - {weapon.price} gold
+                  </div>
+                  <div>Might: {weapon.might}, Type: {weapon.type}</div>
+                  <div className="button-group">
+                    {playerUnits.map((unit) => (
+                      <button
+                        key={unit.id}
+                        className="secondary small"
+                        onClick={() => buyWeapon(playerId!, weapon.id, unit.id)}
+                        disabled={(player?.gold ?? 0) < weapon.price}
+                      >
+                        Buy for {unit.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="shop-section">
+            <h4>Items</h4>
+            <div className="shop-items">
+              {ITEMS.filter(i => i.price).map((item) => (
+                <div key={item.id} className="shop-item">
+                  <div>
+                    <strong>{item.name}</strong> - {item.price} gold
+                  </div>
+                  <div>Type: {item.type}</div>
+                  <div className="button-group">
+                    {playerUnits.map((unit) => (
+                      <button
+                        key={unit.id}
+                        className="secondary small"
+                        onClick={() => buyItem(playerId!, item.id, unit.id)}
+                        disabled={(player?.gold ?? 0) < item.price}
+                      >
+                        Buy for {unit.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+        {isHost && (
+          <section className="panel">
+            <h3>DM Controls</h3>
+            <button onClick={advanceToChapter}>
+              Advance to Chapter {state.chapter + 1}
+            </button>
+          </section>
+        )}
+        <BattleLog logs={state.logs} />
+      </div>
+    </AppShell>
+  );
 }
 
 function BattleScreen({ state }: { state: GameSnapshot }) {
@@ -403,12 +557,14 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const selectUnit = useAppStore((store) => store.selectUnit);
   const moveUnit = useAppStore((store) => store.moveUnit);
   const attackUnit = useAppStore((store) => store.attackUnit);
+  const healUnit = useAppStore((store) => store.healUnit);
   const waitUnit = useAppStore((store) => store.waitUnit);
   const cancelMove = useAppStore((store) => store.cancelMove);
   const equipWeapon = useAppStore((store) => store.equipWeapon);
   const useItem = useAppStore((store) => store.useItem);
   const endTurn = useAppStore((store) => store.endTurn);
   const restartMap = useAppStore((store) => store.restartMap);
+  const endGame = useAppStore((store) => store.endGame);
   const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
   const [animatedPositions, setAnimatedPositions] = useState<Record<string, Position>>({});
@@ -419,6 +575,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const highlights = useMemo(() => new Set(state.highlights.map(tileKey)), [state.highlights]);
   const isHost = state.hostId === playerId;
   const canRestart = state.status === "complete" && state.winner === "enemy" && isHost;
+  const canEndGame = state.status !== "complete" && isHost;
 
   const healthPercent = (unit: Unit) => Math.max(0, Math.min(100, Math.round((unit.stats.hp / unit.stats.maxHp) * 100)));
 
@@ -459,7 +616,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
 
         const blockedPositions = new Set<string>();
         for (const other of state.units) {
-          if (other.alive && other.id !== unit.id) {
+          if (other.alive && other.id !== unit.id && other.team !== unit.team) {
             blockedPositions.add(`${other.position.x},${other.position.y}`);
           }
         }
@@ -535,7 +692,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Battlefield</p>
-          <h2>Chapter 1: Border Skirmish</h2>
+          <h2>Chapter {state.chapter}: {state.chapter === 1 ? "Border Skirmish" : "Mountain Pass"}</h2>
           <p className="phase-label">{state.phase === "player" ? `Player Phase - Turn ${state.turnCount}` : state.phase.toUpperCase()}</p>
         </div>
         <div className="room-meta">
@@ -561,18 +718,21 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                 const isHighlighted = highlights.has(tileKey({ x, y }));
                 const isSelected = occupant?.id === selectedUnit?.id;
                 const isAttackTarget = selectedUnit ? unitCanAttack(selectedUnit, occupant) : false;
+                const isHealTarget = selectedUnit ? unitCanHeal(selectedUnit, occupant) : false;
 
                 return (
                   <button
                     key={`${x}-${y}`}
-                    className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""}`}
+                    className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""} ${isHealTarget ? "heal-target" : ""}`}
                     style={{ backgroundImage: `url(${getTerrainImage(tile.type)})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
                     title={TERRAIN_STYLE[tile.type]?.label || tile.type}
                     onMouseEnter={() => setHoveredUnitId(occupant?.id ?? null)}
                     onClick={() => {
                       if (occupant) {
-                        if (selectedUnit && occupant.team === "enemy" && selectedUnit.ownerId === playerId && !selectedUnit.acted) {
+                        if (selectedUnit && occupant.team === "enemy" && selectedUnit.ownerId === playerId && !selectedUnit.acted && unitCanAttack(selectedUnit, occupant)) {
                           attackUnit(selectedUnit.id, occupant.id);
+                        } else if (selectedUnit && occupant.team === "player" && selectedUnit.ownerId === playerId && !selectedUnit.acted && unitCanHeal(selectedUnit, occupant)) {
+                          healUnit(selectedUnit.id, occupant.id);
                         } else if (occupant.team === "player" && occupant.ownerId === playerId && !occupant.acted) {
                           selectUnit(occupant.id);
                         }
@@ -676,6 +836,11 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                 End Player Phase
               </button>
               {canRestart ? <button onClick={restartMap}>Restart Map</button> : null}
+              {canEndGame ? (
+                <button className="secondary" onClick={() => void endGame()}>
+                  End Game
+                </button>
+              ) : null}
             </div>
           </div>
         </section>
@@ -686,6 +851,9 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
               <img className="unit-portrait" src={hoveredUnit.portraitUrl} alt={`${hoveredUnit.name} portrait`} />
               <strong>
                 {hoveredUnit.name} - {hoveredUnit.className}
+              <span style={{ display: "block", fontSize: "0.95em", color: "var(--muted)", marginTop: "0.2em" }}>
+                Lv {hoveredUnit.level} | EXP {hoveredUnit.exp}
+              </span>
               </strong>
               <span>{hoveredUnit.team === "player" ? "Allied Unit" : "Enemy Unit"}</span>
               <span>
@@ -819,6 +987,10 @@ export function App() {
       ) : state.status === "lobby" ? (
         <motion.div key="lobby" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <LobbyScreen state={state} />
+        </motion.div>
+      ) : state.phase === "basecamp" ? (
+        <motion.div key="basecamp" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <BaseCampScreen state={state} />
         </motion.div>
       ) : (
         <motion.div key="battle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
