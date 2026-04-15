@@ -6,6 +6,7 @@ import type {
   ClientToServerEvents,
   GameState,
   JoinRoomResponse,
+  LevelUpEvent,
   ProfileCharacterRecord,
   ServerToClientEvents,
   UnitClass
@@ -31,7 +32,10 @@ type AppStore = {
   authUser: AuthUser | null;
   profileCharacters: ProfileCharacterRecord[];
   activeGames: ActiveGameSummary[];
-  attackingUnitId: string | null;
+  attackingUnitId?: never;
+  combatAnimation: { unitId: string; className: UnitClass; type: 'attack' | 'heal'; blocksUpdates: boolean } | null;
+  levelUpEvent: LevelUpEvent | null;
+  pendingEnemyStates: GameState[];
   connect: () => void;
   hydrateAuth: () => Promise<void>;
   register: (input: { email: string; password: string; displayName: string }) => Promise<boolean>;
@@ -57,9 +61,11 @@ type AppStore = {
   endGame: () => void;
   buyWeapon: (playerId: string, weaponId: string, unitId: string) => void;
   buyItem: (playerId: string, itemId: string, unitId: string) => void;
+  advanceToBaseCamp: () => void;
   advanceToChapter: () => void;
   removeActiveGame: (roomCode: string) => Promise<void>;
-  clearAttackAnimation: () => void;
+  clearCombatAnimation: () => void;
+  clearLevelUpEvent: () => void;
   refreshProfileCharacters: () => Promise<void>;
   refreshActiveGames: () => Promise<void>;
   saveProfileCharacter: (name: string, className: UnitClass, portraitUrl?: string) => Promise<boolean>;
@@ -139,7 +145,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   authUser: null,
   profileCharacters: [],
   activeGames: [],
-  attackingUnitId: null,
+  attackingUnitId: null as never,
+  combatAnimation: null,
+  levelUpEvent: null,
+  pendingEnemyStates: [],
   connect: () => {
     if (get().socket) {
       return;
@@ -151,9 +160,32 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await get().resumeSession();
     });
     socket.on("disconnect", () => set({ connected: false }));
-    socket.on("stateUpdated", (state) => {
+    socket.on("stateUpdated", (newState) => {
       if (get().view === "game") {
-        set({ state });
+        const { combatAnimation, pendingEnemyStates } = get();
+        // Only queue when an enemy-phase animation is blocking updates
+        if (combatAnimation?.blocksUpdates) {
+          set({ pendingEnemyStates: [...pendingEnemyStates, newState] });
+          return;
+        }
+        if (newState.latestCombatEvent) {
+          const { attackerId, type } = newState.latestCombatEvent;
+          const attacker = newState.units.find((u: { id: string }) => u.id === attackerId);
+          if (attacker) {
+            // Enemy-phase animations block subsequent updates; player-phase ones do not
+            const blocksUpdates = newState.phase === "enemy";
+            set({
+              state: newState,
+              combatAnimation: { unitId: attacker.id, className: attacker.className, type, blocksUpdates },
+              ...(newState.latestLevelUpEvent ? { levelUpEvent: newState.latestLevelUpEvent } : {})
+            });
+            return;
+          }
+        }
+        set({
+          state: newState,
+          ...(newState.latestLevelUpEvent ? { levelUpEvent: newState.latestLevelUpEvent } : {})
+        });
       }
     });
     socket.on("errorMessage", (message) => set({ error: message }));
@@ -254,6 +286,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         playerName: "",
         state: null,
         view: "home",
+        levelUpEvent: null,
         error: null
       });
   },
@@ -373,7 +406,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
     }
     clearSavedSession();
-    set({ state: null, playerId: null, view: "home" });
+    set({ state: null, playerId: null, view: "home", levelUpEvent: null });
     await get().refreshActiveGames();
   },
   endGame: () => {
@@ -426,11 +459,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   attackUnit: (attackerId, targetId) => {
     const roomCode = get().state?.roomCode;
-    const attackingUnit = get().state?.units.find((u) => u.id === attackerId);
     if (roomCode) {
-      if (attackingUnit?.className === "Lord") {
-        set({ attackingUnitId: attackerId });
-      }
       get().socket?.emit("attackUnit", { roomCode, attackerId, targetId });
     }
   },
@@ -486,6 +515,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const roomCode = get().state?.roomCode;
     if (roomCode) {
       get().socket?.emit("buyItem", { roomCode, playerId, itemId, unitId });
+    }
+  },
+  advanceToBaseCamp: () => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("advanceToBaseCamp", { roomCode });
     }
   },
   advanceToChapter: () => {
@@ -562,6 +597,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ error: error instanceof Error ? error.message : "Could not delete profile character." });
     }
   },
-  clearAttackAnimation: () => set({ attackingUnitId: null }),
+  clearCombatAnimation: () => {
+    const pending = get().pendingEnemyStates;
+    if (pending.length === 0) {
+      set({ combatAnimation: null });
+      return;
+    }
+    const combatIdx = pending.findIndex(s => s.latestCombatEvent !== null);
+    if (combatIdx === -1) {
+      set({ combatAnimation: null, state: pending[pending.length - 1], pendingEnemyStates: [] });
+      return;
+    }
+    const combatState = pending[combatIdx];
+    const rest = pending.slice(combatIdx + 1);
+    const { attackerId, type } = combatState.latestCombatEvent!;
+    const attacker = combatState.units.find(u => u.id === attackerId);
+    set({
+      combatAnimation: attacker ? { unitId: attacker.id, className: attacker.className, type, blocksUpdates: true } : null,
+      state: combatState,
+      ...(combatState.latestLevelUpEvent ? { levelUpEvent: combatState.latestLevelUpEvent } : {}),
+      pendingEnemyStates: rest,
+    });
+  },
+  clearLevelUpEvent: () => set({ levelUpEvent: null }),
   clearError: () => set({ error: null })
 }));

@@ -39,6 +39,22 @@ export type Stats = {
   range: number;
 };
 
+export type LevelUpStatGain = {
+  stat: keyof Stats;
+  gain: number;
+  newValue: number;
+};
+
+export type LevelUpEvent = {
+  unitId: string;
+  unitName: string;
+  className: UnitClass;
+  team: UnitTeam;
+  newLevel: number;
+  expRemainder: number;
+  statGains: LevelUpStatGain[];
+};
+
 export type TerrainTile = {
   type: TerrainType;
   moveCost: number;
@@ -118,6 +134,8 @@ export type GameState = {
   winner: UnitTeam | null;
   outcomeRecorded: boolean;
   chapter: number;
+  latestCombatEvent: { attackerId: string; type: 'attack' | 'heal' } | null;
+  latestLevelUpEvent: LevelUpEvent | null;
 };
 
 export type ServerToClientEvents = {
@@ -147,6 +165,7 @@ export type ClientToServerEvents = {
   endGame: (payload: { roomCode: string }) => void;
   buyWeapon: (payload: { roomCode: string; playerId: string; weaponId: string; unitId: string }) => void;
   buyItem: (payload: { roomCode: string; playerId: string; itemId: string; unitId: string }) => void;
+  advanceToBaseCamp: (payload: { roomCode: string }) => void;
   advanceToChapter: (payload: { roomCode: string }) => void;
   leaveRoom: (payload: { roomCode: string }, callback: (response: { ok: boolean }) => void) => void;
 };
@@ -245,6 +264,18 @@ export const CLASS_IMAGES: Record<UnitClass, string> = {
   Archer: "/classes/archer.png"
 };
 
+export const CLASS_ATTACK_GIFS: Record<UnitClass, string | null> = {
+  Lord: "/classes/lord_attack.gif",
+  Mercenary: "/classes/mercenary_attack.gif",
+  Mage: "/classes/mage_attack.gif",
+  Cleric: null,
+  Knight: "/classes/knight_attack.gif",
+  Brigand: "/classes/brigand_attack.gif",
+  Archer: "/classes/archer_attack.gif",
+};
+
+export const CLASS_HEAL_GIF = "/classes/cleric_heal.gif";
+
 function svgToDataUrl(svg: string) {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
@@ -278,6 +309,13 @@ export function getPortraitForUnit(team: UnitTeam, className: UnitClass, portrai
 
 export function distance(a: Position, b: Position): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+export function canUnitAttackAtDistance(unit: Unit, gap: number): boolean {
+  if (unit.className === "Archer") {
+    return gap === 2;
+  }
+  return gap <= unit.stats.range;
 }
 
 export function getTerrainDefense(map: GameMap, position: Position): number {
@@ -336,7 +374,7 @@ export function calculateCombatPreview(attacker: Unit, defender: Unit, attackerT
   const hitChance = calculateHitChance(attacker, defender);
   const critChance = calculateCritChance(attacker, defender);
   const doubles = checkIfDoubles(attacker, defender);
-  const canCounter = distance(attacker.position, defender.position) <= defender.stats.range;
+  const canCounter = canUnitAttackAtDistance(defender, distance(attacker.position, defender.position));
 
   const attackerDamage = doubles ? baseAttackerDamage * 2 : baseAttackerDamage;
   const attackerRemainingHp = Math.max(0, attacker.stats.hp - (canCounter ? defenderDamage : 0));

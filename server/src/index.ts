@@ -6,6 +6,7 @@ import {
   calculateDamage,
   calculateHitChance,
   calculateCritChance,
+  canUnitAttackAtDistance,
   checkIfDoubles,
   CLASS_TEMPLATES,
   getPortraitForUnit,
@@ -225,6 +226,8 @@ const rooms = new Map<string, Room>();
 const PLAYER_LIMIT = 8;
 const CHARACTER_LIMIT = 8;
 const SESSION_LENGTH_MS = 1000 * 60 * 60 * 24 * 30;
+const CLERIC_HEAL_EXP = 15;
+const EXP_PER_LEVEL = 100;
 
 function createRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -340,7 +343,9 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     logs: [{ id: cryptoRandomId(), text: `${hostName} opened room ${roomCode}.` }],
     winner: null,
     outcomeRecorded: false,
-    chapter: 1
+    chapter: 1,
+    latestCombatEvent: null,
+    latestLevelUpEvent: null
   };
 }
 
@@ -402,6 +407,14 @@ async function getOrLoadRoom(roomCode: string) {
   // Add chapter if missing
   if (!persistedState.chapter) {
     persistedState.chapter = 1;
+  }
+  // Add latestCombatEvent if missing
+  if (!('latestCombatEvent' in persistedState)) {
+    (persistedState as any).latestCombatEvent = null;
+  }
+  // Add latestLevelUpEvent if missing
+  if (!("latestLevelUpEvent" in persistedState)) {
+    (persistedState as any).latestLevelUpEvent = null;
   }
 
   const room: Room = {
@@ -497,7 +510,7 @@ function attackableTargets(state: GameState, unit: Unit) {
       return false;
     }
     const gap = Math.abs(candidate.position.x - unit.position.x) + Math.abs(candidate.position.y - unit.position.y);
-    return gap <= unit.stats.range;
+    return canUnitAttackAtDistance(unit, gap);
   });
 }
 
@@ -517,6 +530,8 @@ function resetPlayerActions(state: GameState) {
       unit.originalPosition = { ...unit.position };
     }
   }
+  state.selectedUnitId = null;
+  state.highlights = [];
 }
 
 function resetEnemyActions(state: GameState) {
@@ -642,8 +657,61 @@ function resetBattleState(state: GameState) {
   state.highlights = [];
   state.winner = null;
   state.outcomeRecorded = false;
+  state.latestCombatEvent = null;
+  state.latestLevelUpEvent = null;
   state.map = createMap(state.chapter);
   spawnUnits(state);
+}
+
+function rollLevelUpStatGains(unit: Unit) {
+  const growthRates: Record<UnitClass, Partial<Record<keyof Unit["stats"], number>>> = {
+    Lord: { maxHp: 80, str: 55, mag: 10, skl: 55, spd: 60, def: 40, res: 30 },
+    Mercenary: { maxHp: 75, str: 55, mag: 5, skl: 65, spd: 65, def: 35, res: 20 },
+    Mage: { maxHp: 60, str: 0, mag: 70, skl: 50, spd: 55, def: 20, res: 45 },
+    Cleric: { maxHp: 65, str: 0, mag: 65, skl: 45, spd: 50, def: 15, res: 60 },
+    Knight: { maxHp: 85, str: 60, mag: 0, skl: 45, spd: 30, def: 70, res: 15 },
+    Brigand: { maxHp: 85, str: 65, mag: 0, skl: 35, spd: 40, def: 30, res: 10 },
+    Archer: { maxHp: 70, str: 55, mag: 0, skl: 65, spd: 55, def: 25, res: 20 }
+  };
+  const gains: Array<{ stat: keyof Unit["stats"]; gain: number; newValue: number }> = [];
+  const rates = growthRates[unit.className];
+  const statsToRoll: Array<keyof Unit["stats"]> = ["maxHp", "str", "mag", "skl", "spd", "def", "res"];
+  for (const stat of statsToRoll) {
+    const chance = rates[stat] ?? 0;
+    if (Math.random() * 100 < chance) {
+      if (stat === "maxHp") {
+        unit.stats.maxHp += 1;
+        unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + 1);
+        gains.push({ stat, gain: 1, newValue: unit.stats.maxHp });
+        continue;
+      }
+      unit.stats[stat] += 1;
+      gains.push({ stat, gain: 1, newValue: unit.stats[stat] });
+    }
+  }
+  return gains;
+}
+
+function grantExp(state: GameState, unit: Unit, amount: number) {
+  if (amount <= 0 || !unit.alive) {
+    return;
+  }
+  unit.exp += amount;
+  while (unit.exp >= EXP_PER_LEVEL) {
+    unit.exp -= EXP_PER_LEVEL;
+    unit.level += 1;
+    const statGains = rollLevelUpStatGains(unit);
+    state.latestLevelUpEvent = {
+      unitId: unit.id,
+      unitName: unit.name,
+      className: unit.className,
+      team: unit.team,
+      newLevel: unit.level,
+      expRemainder: unit.exp,
+      statGains
+    };
+    pushLog(state, `${unit.name} reached level ${unit.level}!`);
+  }
 }
 
 function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
@@ -681,12 +749,12 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     defender.alive = false;
     pushLog(state, `${defender.name} was defeated.`);
     if (attacker.team === "player") {
-      attacker.exp += 30;
+      grantExp(state, attacker, 50);
     }
   } else {
     // Defender's counterattacks
     const retaliateDistance = distance(attacker.position, defender.position);
-    if (retaliateDistance <= defender.stats.range) {
+    if (canUnitAttackAtDistance(defender, retaliateDistance)) {
       for (let i = 0; i < defenderAttacks && attacker.stats.hp > 0; i++) {
         const hitChance = calculateHitChance(defender, attacker);
         const hitRoll = Math.random() * 100;
@@ -722,6 +790,9 @@ function resolveHeal(state: GameState, healer: Unit, target: Unit) {
   }
   const actualHeal = Math.min(healAmount, target.stats.maxHp - target.stats.hp);
   target.stats.hp = Math.min(target.stats.maxHp, target.stats.hp + actualHeal);
+  if (healer.className === "Cleric") {
+    grantExp(state, healer, CLERIC_HEAL_EXP);
+  }
   pushLog(state, `${healer.name} healed ${target.name} for ${actualHeal} HP.`);
 }
 
@@ -731,15 +802,11 @@ function checkWinState(state: GameState) {
 
   if (livingEnemies.length === 0) {
     if (state.chapter === 1) {
-      // Chapter 1 completed - go to base camp
-      state.phase = "basecamp";
-      state.status = "battle"; // Keep battle status for base camp
-      pushLog(state, "Chapter 1 cleared! The party arrives at the base camp.");
-      // Give gold to all players
-      for (const player of state.players) {
-        player.gold += 1000;
-      }
-      pushLog(state, "Each player receives 1000 gold!");
+      // Keep battle map visible and let the DM advance after the victory moment.
+      state.phase = "victory";
+      state.status = "battle";
+      state.winner = "player";
+      pushLog(state, "Chapter 1 cleared! Awaiting the DM to advance to Base Camp.");
     } else {
       // Final victory
       state.phase = "victory";
@@ -758,6 +825,8 @@ function checkWinState(state: GameState) {
 async function takeEnemyPhase(room: Room) {
   const state = room.state;
   state.phase = "enemy";
+  state.latestCombatEvent = null;
+  state.latestLevelUpEvent = null;
   state.activePlayerId = null;
   resetEnemyActions(state);
   pushLog(state, "Enemy phase begins.");
@@ -769,13 +838,23 @@ async function takeEnemyPhase(room: Room) {
       break;
     }
     const target = [...livingPlayers].sort((a, b) => distance(enemy.position, a.position) - distance(enemy.position, b.position))[0];
-    if (distance(enemy.position, target.position) > enemy.stats.range) {
+    if (!canUnitAttackAtDistance(enemy, distance(enemy.position, target.position))) {
       const options = movementRange(state, enemy)
         .filter((option) => !unitAt(state, option))
-        .sort((a, b) => distance(a, target.position) - distance(b, target.position));
+        .sort((a, b) => {
+          const distanceA = distance(a, target.position);
+          const distanceB = distance(b, target.position);
+          const aCanAttack = canUnitAttackAtDistance(enemy, distanceA) ? 0 : 1;
+          const bCanAttack = canUnitAttackAtDistance(enemy, distanceB) ? 0 : 1;
+          if (aCanAttack !== bCanAttack) {
+            return aCanAttack - bCanAttack;
+          }
+          return distanceA - distanceB;
+        });
       if (options[0]) {
         enemy.position = options[0];
         enemy.moved = true;
+        state.latestCombatEvent = null;
         await emitState(room);
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
@@ -783,15 +862,18 @@ async function takeEnemyPhase(room: Room) {
     const victim = attackableTargets(state, enemy).sort((a, b) => a.stats.hp - b.stats.hp)[0];
     if (victim) {
       resolveAttack(state, enemy, victim);
+      state.latestCombatEvent = { attackerId: enemy.id, type: 'attack' };
       await emitState(room);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      state.latestCombatEvent = null;
+      await new Promise(resolve => setTimeout(resolve, 2500));
     } else {
       enemy.acted = true;
     }
   }
 
   checkWinState(state);
-  if (state.status !== "complete" && state.phase !== "basecamp") {
+  state.latestCombatEvent = null;
+  if (state.status !== "complete" && state.phase === "enemy") {
     state.phase = "player";
     state.turnCount += 1;
     resetPlayerActions(state);
@@ -1016,9 +1098,14 @@ io.on("connection", (socket) => {
       return;
     }
     resolveAttack(room.state, attacker, target);
+    room.state.latestCombatEvent = { attackerId: attacker.id, type: 'attack' };
     checkWinState(room.state);
-    if (room.state.status !== "complete" && allPlayerUnitsActed(room.state)) {
+    await emitState(room);
+    room.state.latestCombatEvent = null;
+    room.state.latestLevelUpEvent = null;
+    if (room.state.phase === "player" && room.state.status !== "complete" && allPlayerUnitsActed(room.state)) {
       await takeEnemyPhase(room);
+      return;
     }
     await emitState(room);
   });
@@ -1031,6 +1118,10 @@ io.on("connection", (socket) => {
     const healer = findUnit(room.state, healerId);
     const target = findUnit(room.state, targetId);
     if (!healer || !target || healer.acted || !canControlUnit(room.state, playerId, healer)) {
+      return;
+    }
+    if (healer.id === target.id) {
+      io.to(socket.id).emit("errorMessage", "A unit cannot heal itself.");
       return;
     }
     if (healer.className !== "Cleric" || target.team !== "player") {
@@ -1046,9 +1137,33 @@ io.on("connection", (socket) => {
     healer.acted = true;
     room.state.selectedUnitId = null;
     room.state.highlights = [];
-    if (allPlayerUnitsActed(room.state)) {
+    room.state.latestCombatEvent = { attackerId: healer.id, type: 'heal' };
+    await emitState(room);
+    room.state.latestCombatEvent = null;
+    room.state.latestLevelUpEvent = null;
+    if (room.state.phase === "player" && allPlayerUnitsActed(room.state)) {
       await takeEnemyPhase(room);
+      return;
     }
+    await emitState(room);
+  });
+
+  socket.on("advanceToBaseCamp", async ({ roomCode }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || room.state.hostId !== playerId) {
+      return;
+    }
+    if (room.state.chapter !== 1 || room.state.phase !== "victory" || room.state.winner !== "player") {
+      io.to(socket.id).emit("errorMessage", "Base Camp can only be opened after a chapter victory.");
+      return;
+    }
+    room.state.phase = "basecamp";
+    room.state.status = "battle";
+    for (const player of room.state.players) {
+      player.gold += 1000;
+    }
+    pushLog(room.state, "The party arrives at the base camp.");
+    pushLog(room.state, "Each player receives 1000 gold!");
     await emitState(room);
   });
 

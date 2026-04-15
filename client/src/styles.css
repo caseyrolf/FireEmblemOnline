@@ -155,7 +155,7 @@ select {
 }
 
 .battle-layout {
-  grid-template-columns: 0.5fr 1.5fr 0.8fr 0.8fr;
+  grid-template-columns: 0.55fr 1.45fr 0.65fr 1.05fr;
   align-items: start;
   max-height: 70vh;
 }
@@ -209,6 +209,60 @@ select {
   padding: 1rem;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.unit-detail-panel {
+  min-width: 360px;
+}
+
+.detail-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.detail-main {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.detail-main-meta {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.detail-meta-line {
+  color: var(--muted);
+  font-size: 0.95em;
+}
+
+.detail-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin-top: 0;
+}
+
+.detail-stat {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.detail-stat > span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.detail-stat > strong {
+  font-size: 0.86rem;
 }
 
 .combat-preview {
@@ -515,6 +569,15 @@ ul {
   .tile {
     min-width: 38px;
   }
+
+  .unit-detail-panel {
+    min-width: 0;
+  }
+
+  .detail-overview,
+  .detail-main {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Attack Animation Styles */
@@ -539,4 +602,74 @@ ul {
   height: auto;
   object-fit: contain;
   filter: drop-shadow(0 0 20px rgba(255, 215, 41, 0.6));
+}
+
+.battle-outcome-overlay,
+.level-up-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  background: rgba(5, 8, 14, 0.65);
+}
+
+.battle-outcome-card,
+.level-up-modal {
+  width: min(92vw, 460px);
+  padding: 1.2rem 1.25rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: linear-gradient(180deg, rgba(18, 25, 36, 0.96), rgba(11, 15, 22, 0.96));
+  box-shadow: 0 18px 80px rgba(0, 0, 0, 0.45);
+}
+
+.battle-outcome-card h2 {
+  margin: 0.2rem 0 0.4rem;
+  font-size: clamp(1.5rem, 4vw, 2.25rem);
+  letter-spacing: 0.06em;
+}
+
+.battle-outcome-card.player h2 {
+  color: #9fdca4;
+}
+
+.battle-outcome-card.enemy h2 {
+  color: #f1a09b;
+}
+
+.battle-outcome-action {
+  margin-top: 0.9rem;
+}
+
+.level-up-subtitle {
+  margin: 0.2rem 0 0.8rem;
+}
+
+.level-up-stats {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.level-up-stat-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.level-up-stat-row strong {
+  color: #9fdca4;
+}
+
+@media (max-width: 700px) {
+  .battle-outcome-card,
+  .level-up-modal {
+    width: min(94vw, 360px);
+    padding: 1rem;
+  }
 }

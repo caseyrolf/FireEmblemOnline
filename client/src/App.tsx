@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CLASS_OPTIONS, TERRAIN_STYLE, getDefaultPortrait, getClassImage, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS } from "../../shared/game";
+import { CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -19,6 +19,21 @@ function getTerrainImage(type: string): string {
   };
   return `/terrain/${mapping[type] || "Grass.PNG"}`;
 }
+
+const LEVEL_UP_STAT_LABELS: Record<keyof Unit["stats"], string> = {
+  hp: "HP",
+  maxHp: "MAX HP",
+  str: "STR",
+  mag: "MAG",
+  skl: "SKL",
+  spd: "SPD",
+  def: "DEF",
+  res: "RES",
+  mov: "MOV",
+  range: "RNG"
+};
+
+const UNIT_DETAIL_STAT_ORDER: Array<keyof Unit["stats"]> = ["str", "mag", "skl", "spd", "def", "res", "mov", "range"];
 
 function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -366,25 +381,28 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
 }
 
 function AttackAnimation() {
-  const [isVisible, setIsVisible] = useState(false);
-  const attackingUnitId = useAppStore((store) => store.attackingUnitId);
-  const clearAttackAnimation = useAppStore((store) => store.clearAttackAnimation);
+  const combatAnimation = useAppStore((store) => store.combatAnimation);
+  const clearCombatAnimation = useAppStore((store) => store.clearCombatAnimation);
 
   useEffect(() => {
-    if (attackingUnitId) {
-      setIsVisible(true);
-      const timer = setTimeout(() => {
-        setIsVisible(false);
-        clearAttackAnimation();
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [attackingUnitId, clearAttackAnimation]);
+    if (!combatAnimation) return;
+    const timer = setTimeout(() => {
+      clearCombatAnimation();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [combatAnimation, clearCombatAnimation]);
+
+  const animGif = combatAnimation
+    ? combatAnimation.type === 'heal'
+      ? CLASS_HEAL_GIF
+      : CLASS_ATTACK_GIFS[combatAnimation.className]
+    : null;
 
   return (
     <AnimatePresence>
-      {isVisible && (
+      {combatAnimation && animGif ? (
         <motion.div
+          key={combatAnimation.unitId + combatAnimation.type}
           className="attack-animation-overlay"
           initial={{ opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -392,8 +410,8 @@ function AttackAnimation() {
           transition={{ duration: 0.3 }}
         >
           <motion.img
-            src="/classes/lord_attack.gif"
-            alt="Lord Attack"
+            src={animGif}
+            alt="Combat animation"
             className="attack-animation-sprite"
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
@@ -401,7 +419,118 @@ function AttackAnimation() {
             transition={{ duration: 0.4 }}
           />
         </motion.div>
-      )}
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+function LevelUpOverlay() {
+  const levelUpEvent = useAppStore((store) => store.levelUpEvent);
+  const clearLevelUpEvent = useAppStore((store) => store.clearLevelUpEvent);
+
+  useEffect(() => {
+    if (!levelUpEvent) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      clearLevelUpEvent();
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [levelUpEvent, clearLevelUpEvent]);
+
+  return (
+    <AnimatePresence>
+      {levelUpEvent ? (
+        <motion.div
+          key={`${levelUpEvent.unitId}-${levelUpEvent.newLevel}`}
+          className="level-up-overlay"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div
+            className="level-up-modal"
+            initial={{ scale: 0.92, y: 16, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.96, y: -16, opacity: 0 }}
+            transition={{ duration: 0.24 }}
+          >
+            <p className="eyebrow">Level Up</p>
+            <h3>{levelUpEvent.unitName} reached Lv {levelUpEvent.newLevel}</h3>
+            <p className="muted level-up-subtitle">{levelUpEvent.className} - EXP {levelUpEvent.expRemainder}/100</p>
+            <div className="level-up-stats">
+              {levelUpEvent.statGains.length > 0 ? (
+                levelUpEvent.statGains.map((gain) => (
+                  <div key={`${gain.stat}-${gain.newValue}`} className="level-up-stat-row">
+                    <span>{LEVEL_UP_STAT_LABELS[gain.stat]}</span>
+                    <strong>+{gain.gain}</strong>
+                    <span>{gain.newValue}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="muted">No stats increased this level.</p>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
+function BattleOutcomeOverlay({
+  winner,
+  show,
+  isHost,
+  chapter,
+  onAdvanceToBaseCamp,
+  onExitGame
+}: {
+  winner: "player" | "enemy" | null;
+  show: boolean;
+  isHost: boolean;
+  chapter: number;
+  onAdvanceToBaseCamp: () => void;
+  onExitGame: () => void;
+}) {
+  const canAdvanceToBaseCamp = show && winner === "player" && chapter === 1;
+  const canExitAfterFinalVictory = show && winner === "player" && chapter > 1;
+
+  return (
+    <AnimatePresence>
+      {show && winner ? (
+        <motion.div
+          className="battle-outcome-overlay"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div
+            className={`battle-outcome-card ${winner}`}
+            initial={{ scale: 0.92, y: 18 }}
+            animate={{ scale: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <p className="eyebrow">Battle Result</p>
+            <h2>{winner === "player" ? "Victory" : "Defeat"}</h2>
+            <p>{winner === "player" ? "The enemy force is routed." : "Your party has fallen in battle."}</p>
+            {canAdvanceToBaseCamp ? (
+              isHost ? (
+                <button className="battle-outcome-action" onClick={onAdvanceToBaseCamp}>
+                  Advance To Base Camp
+                </button>
+              ) : (
+                <p className="muted">Waiting for the DM to advance to Base Camp.</p>
+              )
+            ) : null}
+            {canExitAfterFinalVictory ? (
+              <button className="battle-outcome-action" onClick={onExitGame}>
+                Exit Chapter View
+              </button>
+            ) : null}
+          </motion.div>
+        </motion.div>
+      ) : null}
     </AnimatePresence>
   );
 }
@@ -411,7 +540,7 @@ function unitCanAttack(unit: Unit, hoveredUnit: Unit | undefined) {
     return false;
   }
   const gap = Math.abs(unit.position.x - hoveredUnit.position.x) + Math.abs(unit.position.y - hoveredUnit.position.y);
-  return gap <= unit.stats.range;
+  return canUnitAttackAtDistance(unit, gap);
 }
 
 function unitCanHeal(unit: Unit, hoveredUnit: Unit | undefined) {
@@ -502,7 +631,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
                         key={unit.id}
                         className="secondary small"
                         onClick={() => buyWeapon(playerId!, weapon.id, unit.id)}
-                        disabled={(player?.gold ?? 0) < weapon.price}
+                        disabled={(player?.gold ?? 0) < (weapon.price ?? 0)}
                       >
                         Buy for {unit.name}
                       </button>
@@ -527,7 +656,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
                         key={unit.id}
                         className="secondary small"
                         onClick={() => buyItem(playerId!, item.id, unit.id)}
-                        disabled={(player?.gold ?? 0) < item.price}
+                        disabled={(player?.gold ?? 0) < (item.price ?? 0)}
                       >
                         Buy for {unit.name}
                       </button>
@@ -554,6 +683,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
 
 function BattleScreen({ state }: { state: GameSnapshot }) {
   const playerId = useAppStore((store) => store.playerId);
+  const combatAnimation = useAppStore((store) => store.combatAnimation);
   const selectUnit = useAppStore((store) => store.selectUnit);
   const moveUnit = useAppStore((store) => store.moveUnit);
   const attackUnit = useAppStore((store) => store.attackUnit);
@@ -562,6 +692,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const cancelMove = useAppStore((store) => store.cancelMove);
   const equipWeapon = useAppStore((store) => store.equipWeapon);
   const useItem = useAppStore((store) => store.useItem);
+  const advanceToBaseCamp = useAppStore((store) => store.advanceToBaseCamp);
   const endTurn = useAppStore((store) => store.endTurn);
   const restartMap = useAppStore((store) => store.restartMap);
   const endGame = useAppStore((store) => store.endGame);
@@ -576,6 +707,8 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const isHost = state.hostId === playerId;
   const canRestart = state.status === "complete" && state.winner === "enemy" && isHost;
   const canEndGame = state.status !== "complete" && isHost;
+  const hasBattleOutcome = state.phase === "victory" || state.phase === "defeat" || state.status === "complete";
+  const showOutcomeOverlay = hasBattleOutcome && !combatAnimation;
 
   const healthPercent = (unit: Unit) => Math.max(0, Math.min(100, Math.round((unit.stats.hp / unit.stats.maxHp) * 100)));
 
@@ -689,6 +822,15 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   return (
     <AppShell>
       <AttackAnimation />
+      <LevelUpOverlay />
+      <BattleOutcomeOverlay
+        winner={state.winner}
+        show={showOutcomeOverlay}
+        isHost={isHost}
+        chapter={state.chapter}
+        onAdvanceToBaseCamp={advanceToBaseCamp}
+        onExitGame={() => void exitCurrentGame()}
+      />
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Battlefield</p>
@@ -731,7 +873,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                       if (occupant) {
                         if (selectedUnit && occupant.team === "enemy" && selectedUnit.ownerId === playerId && !selectedUnit.acted && unitCanAttack(selectedUnit, occupant)) {
                           attackUnit(selectedUnit.id, occupant.id);
-                        } else if (selectedUnit && occupant.team === "player" && selectedUnit.ownerId === playerId && !selectedUnit.acted && unitCanHeal(selectedUnit, occupant)) {
+                        } else if (selectedUnit && occupant.team === "player" && selectedUnit.ownerId === playerId && !selectedUnit.acted && occupant.id !== selectedUnit.id && unitCanHeal(selectedUnit, occupant)) {
                           healUnit(selectedUnit.id, occupant.id);
                         } else if (occupant.team === "player" && occupant.ownerId === playerId && !occupant.acted) {
                           selectUnit(occupant.id);
@@ -844,27 +986,36 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
             </div>
           </div>
         </section>
-        <section className="panel">
+        <section className="panel unit-detail-panel">
           <h3>Unit Detail</h3>
           {hoveredUnit ? (
             <div className="detail-card">
-              <img className="unit-portrait" src={hoveredUnit.portraitUrl} alt={`${hoveredUnit.name} portrait`} />
-              <strong>
-                {hoveredUnit.name} - {hoveredUnit.className}
-              <span style={{ display: "block", fontSize: "0.95em", color: "var(--muted)", marginTop: "0.2em" }}>
-                Lv {hoveredUnit.level} | EXP {hoveredUnit.exp}
-              </span>
-              </strong>
-              <span>{hoveredUnit.team === "player" ? "Allied Unit" : "Enemy Unit"}</span>
-              <span>
-                HP {hoveredUnit.stats.hp}/{hoveredUnit.stats.maxHp}
-              </span>
-              <div className="health-bar detail-health-bar">
-                <div className="health-bar-fill" style={{ width: `${healthPercent(hoveredUnit)}%` }} />
+              <div className="detail-overview">
+                <div className="detail-main">
+                  <img className="unit-portrait" src={hoveredUnit.portraitUrl} alt={`${hoveredUnit.name} portrait`} />
+                  <div className="detail-main-meta">
+                    <strong>
+                      {hoveredUnit.name} - {hoveredUnit.className}
+                    </strong>
+                    <span className="detail-meta-line">Lv {hoveredUnit.level} | EXP {hoveredUnit.exp}</span>
+                    <span>{hoveredUnit.team === "player" ? "Allied Unit" : "Enemy Unit"}</span>
+                    <span>
+                      HP {hoveredUnit.stats.hp}/{hoveredUnit.stats.maxHp}
+                    </span>
+                    <div className="health-bar detail-health-bar">
+                      <div className="health-bar-fill" style={{ width: `${healthPercent(hoveredUnit)}%` }} />
+                    </div>
+                  </div>
+                </div>
+                <div className="detail-stat-grid">
+                  {UNIT_DETAIL_STAT_ORDER.map((statKey) => (
+                    <div key={statKey} className="detail-stat">
+                      <span>{LEVEL_UP_STAT_LABELS[statKey]}</span>
+                      <strong>{hoveredUnit.stats[statKey]}</strong>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <span>
-                STR {hoveredUnit.stats.str} - MAG {hoveredUnit.stats.mag} - DEF {hoveredUnit.stats.def} - RES {hoveredUnit.stats.res}
-              </span>
               <span>Equipped Weapon: {hoveredUnit.equippedWeapon ? `${hoveredUnit.equippedWeapon.name} (${hoveredUnit.equippedWeapon.might} might)` : "None"}</span>
               {hoveredUnit.inventory.weapons.length > 0 ? (
                 <div>
