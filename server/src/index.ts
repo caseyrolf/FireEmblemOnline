@@ -1246,6 +1246,7 @@ io.on("connection", (socket) => {
       unit.acted = true;
       room.state.selectedUnitId = null;
       room.state.highlights = [];
+      room.state.latestCombatEvent = null;
       if (allPlayerUnitsActed(room.state)) {
         await takeEnemyPhase(room);
       }

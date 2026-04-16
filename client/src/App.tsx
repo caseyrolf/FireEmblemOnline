@@ -35,6 +35,29 @@ const LEVEL_UP_STAT_LABELS: Record<keyof Unit["stats"], string> = {
 
 const UNIT_DETAIL_STAT_ORDER: Array<keyof Unit["stats"]> = ["str", "mag", "skl", "spd", "def", "res", "mov", "range"];
 
+const SHOP_TAB_STORAGE_KEY = "feo:basecamp:shop-tab";
+const SHOP_AFFORDABLE_STORAGE_KEY = "feo:basecamp:affordable-only";
+const SHOP_COMPAT_CLASS_STORAGE_KEY = "feo:basecamp:compat-class";
+const BATTLE_TAB_STORAGE_KEY = "feo:battle:mobile-tab";
+
+const CLASS_WEAPON_TYPES: Record<Unit["className"], string[]> = {
+  Lord: ["Sword"],
+  Mercenary: ["Sword"],
+  Mage: ["Magic Tome"],
+  Cleric: ["Staff"],
+  Knight: ["Lance"],
+  Brigand: ["Axe"],
+  Archer: ["Bow"]
+};
+
+function getCompatibleWeaponTypes(className: Unit["className"]): string[] {
+  return CLASS_WEAPON_TYPES[className] ?? [];
+}
+
+function formatTabCount(count: number): string {
+  return count > 99 ? "99+" : String(count);
+}
+
 function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
@@ -48,6 +71,23 @@ function AppShell({ children }: { children: ReactNode }) {
       </div>
       {children}
     </div>
+  );
+}
+
+function StatusStrip({
+  items
+}: {
+  items: Array<{ label: string; value: string; tone?: "neutral" | "good" | "warn" }>;
+}) {
+  return (
+    <section className="panel status-strip" aria-label="Current status">
+      {items.map((item) => (
+        <div key={item.label} className={`status-chip ${item.tone ?? "neutral"}`}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -222,6 +262,7 @@ function LandingScreen() {
 
 function LobbyScreen({ state }: { state: GameSnapshot }) {
   const playerId = useAppStore((store) => store.playerId);
+  const connected = useAppStore((store) => store.connected);
   const authUser = useAppStore((store) => store.authUser)!;
   const profileCharacters = useAppStore((store) => store.profileCharacters);
   const createCharacter = useAppStore((store) => store.createCharacter);
@@ -233,6 +274,12 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   const [className, setClassName] = useState(CLASS_OPTIONS[0]);
   const [portraitUrl, setPortraitUrl] = useState<string | undefined>(undefined);
   const isHost = state.hostId === playerId;
+  const statusItems = [
+    { label: "Socket", value: connected ? "Live" : "Connecting", tone: connected ? "good" as const : "warn" as const },
+    { label: "Room", value: state.roomCode },
+    { label: "Players", value: `${state.players.length}` },
+    { label: "Drafted", value: `${state.characterDrafts.length}` }
+  ];
 
   function resetDraftForm() {
     setName("");
@@ -258,6 +305,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
 
   return (
     <AppShell>
+      <StatusStrip items={statusItems} />
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Lobby</p>
@@ -413,9 +461,9 @@ function AttackAnimation() {
             src={animGif}
             alt="Combat animation"
             className="attack-animation-sprite"
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -50 }}
+            initial={{ opacity: 0, y: 50, scale: 2 }}
+            animate={{ opacity: 1, y: 0, scale: 2 }}
+            exit={{ opacity: 0, y: -50, scale: 2 }}
             transition={{ duration: 0.4 }}
           />
         </motion.div>
@@ -551,6 +599,57 @@ function unitCanHeal(unit: Unit, hoveredUnit: Unit | undefined) {
   return gap <= unit.stats.range;
 }
 
+function enemyMovementRange(state: GameSnapshot, unit: Unit) {
+  const frontier: Array<{ position: Position; cost: number }> = [{ position: unit.position, cost: 0 }];
+  const bestCost = new Map<string, number>([[tileKey(unit.position), 0]]);
+  const reachable = new Set<string>();
+
+  while (frontier.length > 0) {
+    const current = frontier.shift()!;
+    const neighbors: Position[] = [
+      { x: current.position.x + 1, y: current.position.y },
+      { x: current.position.x - 1, y: current.position.y },
+      { x: current.position.x, y: current.position.y + 1 },
+      { x: current.position.x, y: current.position.y - 1 }
+    ];
+
+    for (const next of neighbors) {
+      if (next.x < 0 || next.y < 0 || next.x >= state.map.width || next.y >= state.map.height) {
+        continue;
+      }
+      const tile = state.map.tiles[next.y]?.[next.x];
+      if (!tile || tile.type === "mountain") {
+        continue;
+      }
+      const occupant = state.units.find(
+        (candidate) => candidate.alive && candidate.position.x === next.x && candidate.position.y === next.y
+      );
+      if (occupant && occupant.id !== unit.id && occupant.team !== unit.team) {
+        continue;
+      }
+
+      const nextCost = current.cost + tile.moveCost;
+      if (nextCost > unit.stats.mov) {
+        continue;
+      }
+
+      const nextKey = tileKey(next);
+      const knownCost = bestCost.get(nextKey);
+      if (knownCost !== undefined && knownCost <= nextCost) {
+        continue;
+      }
+
+      bestCost.set(nextKey, nextCost);
+      if (!occupant || occupant.id === unit.id) {
+        reachable.add(nextKey);
+      }
+      frontier.push({ position: next, cost: nextCost });
+    }
+  }
+
+  return reachable;
+}
+
 function BaseCampScreen({ state }: { state: GameSnapshot }) {
   const playerId = useAppStore((store) => store.playerId);
   const buyWeapon = useAppStore((store) => store.buyWeapon);
@@ -558,12 +657,67 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
   const advanceToChapter = useAppStore((store) => store.advanceToChapter);
   const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
   const isHost = state.hostId === playerId;
+  const [shopTab, setShopTab] = useState<"all" | "weapons" | "items">(() => {
+    const stored = typeof window !== "undefined" ? window.sessionStorage.getItem(SHOP_TAB_STORAGE_KEY) : null;
+    return stored === "weapons" || stored === "items" || stored === "all" ? stored : "all";
+  });
+  const [affordableOnly, setAffordableOnly] = useState<boolean>(() => {
+    const stored = typeof window !== "undefined" ? window.sessionStorage.getItem(SHOP_AFFORDABLE_STORAGE_KEY) : null;
+    return stored === "true";
+  });
+  const [compatibleClass, setCompatibleClass] = useState<"all" | Unit["className"]>(() => {
+    const stored = typeof window !== "undefined" ? window.sessionStorage.getItem(SHOP_COMPAT_CLASS_STORAGE_KEY) : null;
+    if (!stored || stored === "all") {
+      return "all";
+    }
+    return CLASS_OPTIONS.includes(stored as Unit["className"]) ? (stored as Unit["className"]) : "all";
+  });
 
   const player = state.players.find(p => p.id === playerId);
   const playerUnits = state.units.filter(u => u.ownerId === playerId && u.alive);
+  const gold = player?.gold ?? 0;
+  const filteredWeapons = WEAPONS.filter((weapon) => {
+    if (!weapon.price) {
+      return false;
+    }
+    const passesGold = !affordableOnly || weapon.price <= gold;
+    if (!passesGold) {
+      return false;
+    }
+    if (compatibleClass === "all") {
+      return true;
+    }
+    return getCompatibleWeaponTypes(compatibleClass).includes(weapon.type);
+  });
+  const filteredItems = ITEMS.filter((item) => {
+    if (!item.price) {
+      return false;
+    }
+    return !affordableOnly || item.price <= gold;
+  });
+  const statusItems = [
+    { label: "Room", value: state.roomCode },
+    { label: "Gold", value: `${gold}` },
+    { label: "Units", value: `${playerUnits.length}` },
+    { label: "DM", value: isHost ? "You" : "Waiting", tone: isHost ? "good" as const : "neutral" as const }
+  ];
+  const activeFilterCount = (shopTab !== "all" ? 1 : 0) + (affordableOnly ? 1 : 0) + (compatibleClass !== "all" ? 1 : 0);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(SHOP_TAB_STORAGE_KEY, shopTab);
+  }, [shopTab]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(SHOP_AFFORDABLE_STORAGE_KEY, String(affordableOnly));
+  }, [affordableOnly]);
+
+  useEffect(() => {
+    window.sessionStorage.setItem(SHOP_COMPAT_CLASS_STORAGE_KEY, compatibleClass);
+  }, [compatibleClass]);
 
   return (
     <AppShell>
+      <StatusStrip items={statusItems} />
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Base Camp</p>
@@ -612,14 +766,42 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
           </div>
         </section>
         <section className="panel">
-          <h3>Shop</h3>
+          <div className="shop-title-row">
+            <h3>Shop</h3>
+            {activeFilterCount > 0 ? <span className="shop-active-indicator">{activeFilterCount} filters active</span> : null}
+          </div>
           <div>
             <strong>Your Gold: {player?.gold ?? 0}</strong>
           </div>
-          <div className="shop-section">
-            <h4>Weapons</h4>
-            <div className="shop-items">
-              {WEAPONS.filter(w => w.price).map((weapon) => (
+          <div className="shop-filter-bar" role="group" aria-label="Shop filters">
+            <div className="shop-tab-group">
+              <button className={shopTab === "all" ? "secondary is-active" : "secondary"} onClick={() => setShopTab("all")}>All</button>
+              <button className={shopTab === "weapons" ? "secondary is-active" : "secondary"} onClick={() => setShopTab("weapons")}>Weapons</button>
+              <button className={shopTab === "items" ? "secondary is-active" : "secondary"} onClick={() => setShopTab("items")}>Items</button>
+            </div>
+            <button
+              className={affordableOnly ? "secondary is-active" : "secondary"}
+              onClick={() => setAffordableOnly((current) => !current)}
+            >
+              {affordableOnly ? "Showing Affordable" : "Show Affordable Only"}
+            </button>
+            <label className="shop-compat-filter">
+              <span>Class Compatibility</span>
+              <select value={compatibleClass} onChange={(event) => setCompatibleClass(event.target.value as "all" | Unit["className"])}>
+                <option value="all">All Classes</option>
+                {CLASS_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {shopTab === "all" || shopTab === "weapons" ? (
+            <div className="shop-section">
+              <h4>Weapons</h4>
+              <div className="shop-items">
+                {filteredWeapons.length > 0 ? filteredWeapons.map((weapon) => (
                 <div key={weapon.id} className="shop-item">
                   <div>
                     <strong>{weapon.name}</strong> - {weapon.price} gold
@@ -629,22 +811,24 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
                     {playerUnits.map((unit) => (
                       <button
                         key={unit.id}
-                        className="secondary small"
+                        className="secondary small-button"
                         onClick={() => buyWeapon(playerId!, weapon.id, unit.id)}
-                        disabled={(player?.gold ?? 0) < (weapon.price ?? 0)}
+                        disabled={gold < (weapon.price ?? 0)}
                       >
                         Buy for {unit.name}
                       </button>
                     ))}
                   </div>
                 </div>
-              ))}
+                )) : <p className="muted">No weapons match your current filters.</p>}
+              </div>
             </div>
-          </div>
-          <div className="shop-section">
-            <h4>Items</h4>
-            <div className="shop-items">
-              {ITEMS.filter(i => i.price).map((item) => (
+          ) : null}
+          {shopTab === "all" || shopTab === "items" ? (
+            <div className="shop-section">
+              <h4>Items</h4>
+              <div className="shop-items">
+                {filteredItems.length > 0 ? filteredItems.map((item) => (
                 <div key={item.id} className="shop-item">
                   <div>
                     <strong>{item.name}</strong> - {item.price} gold
@@ -654,18 +838,19 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
                     {playerUnits.map((unit) => (
                       <button
                         key={unit.id}
-                        className="secondary small"
+                        className="secondary small-button"
                         onClick={() => buyItem(playerId!, item.id, unit.id)}
-                        disabled={(player?.gold ?? 0) < (item.price ?? 0)}
+                        disabled={gold < (item.price ?? 0)}
                       >
                         Buy for {unit.name}
                       </button>
                     ))}
                   </div>
                 </div>
-              ))}
+                )) : <p className="muted">No items match your current filters.</p>}
+              </div>
             </div>
-          </div>
+          ) : null}
         </section>
         {isHost && (
           <section className="panel">
@@ -684,6 +869,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
 function BattleScreen({ state }: { state: GameSnapshot }) {
   const playerId = useAppStore((store) => store.playerId);
   const combatAnimation = useAppStore((store) => store.combatAnimation);
+  const connected = useAppStore((store) => store.connected);
   const selectUnit = useAppStore((store) => store.selectUnit);
   const moveUnit = useAppStore((store) => store.moveUnit);
   const attackUnit = useAppStore((store) => store.attackUnit);
@@ -700,6 +886,11 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
   const [animatedPositions, setAnimatedPositions] = useState<Record<string, Position>>({});
   const [animationState, setAnimationState] = useState<Record<string, { path: Position[]; startedAt: number }>>({});
+  const [activeMobileTab, setActiveMobileTab] = useState<"map" | "actions" | "detail" | "log">(() => {
+    const stored = typeof window !== "undefined" ? window.sessionStorage.getItem(BATTLE_TAB_STORAGE_KEY) : null;
+    return stored === "actions" || stored === "detail" || stored === "log" || stored === "map" ? stored : "map";
+  });
+  const [statsOpen, setStatsOpen] = useState(true);
 
   const selectedUnit = state.units.find((unit) => unit.id === state.selectedUnitId && unit.alive) ?? null;
   const hoveredUnit = state.units.find((unit) => unit.id === hoveredUnitId && unit.alive);
@@ -709,6 +900,26 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const canEndGame = state.status !== "complete" && isHost;
   const hasBattleOutcome = state.phase === "victory" || state.phase === "defeat" || state.status === "complete";
   const showOutcomeOverlay = hasBattleOutcome && !combatAnimation;
+  const selectedHint = selectedUnit
+    ? `${selectedUnit.name} ${selectedUnit.acted ? "ready" : "active"}`
+    : "No unit selected";
+  const statusItems = [
+    { label: "Socket", value: connected ? "Live" : "Connecting", tone: connected ? "good" as const : "warn" as const },
+    { label: "Phase", value: state.phase === "player" ? `Player ${state.turnCount}` : state.phase.toUpperCase() },
+    { label: "Objective", value: state.winner ? (state.winner === "player" ? "Victory" : "Defeat") : "Rout the enemy" },
+    { label: "Selected", value: selectedHint }
+  ];
+  const actionCount = selectedUnit
+    ? (selectedUnit.inventory.items.length + selectedUnit.inventory.weapons.length + (selectedUnit.moved && !selectedUnit.acted ? 1 : 0) + 1)
+    : 0;
+  const detailCount = hoveredUnit ? 1 : 0;
+  const actionBadgeHint = selectedUnit
+    ? `Actions include ${selectedUnit.inventory.weapons.length} weapons, ${selectedUnit.inventory.items.length} items, wait, and conditional cancel move.`
+    : "No unit selected, so no actions are available.";
+
+  useEffect(() => {
+    window.sessionStorage.setItem(BATTLE_TAB_STORAGE_KEY, activeMobileTab);
+  }, [activeMobileTab]);
 
   const healthPercent = (unit: Unit) => Math.max(0, Math.min(100, Math.round((unit.stats.hp / unit.stats.maxHp) * 100)));
 
@@ -819,6 +1030,13 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
     return calculateCombatPreview(selectedUnit, hoveredUnit, attackerTerrain, defenderTerrain);
   }, [selectedUnit, hoveredUnit, state.map]);
 
+  const hoveredEnemyMovementTiles = useMemo(() => {
+    if (!hoveredUnit || hoveredUnit.team !== "enemy") {
+      return new Set<string>();
+    }
+    return enemyMovementRange(state, hoveredUnit);
+  }, [state, hoveredUnit]);
+
   return (
     <AppShell>
       <AttackAnimation />
@@ -831,6 +1049,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         onAdvanceToBaseCamp={advanceToBaseCamp}
         onExitGame={() => void exitCurrentGame()}
       />
+      <StatusStrip items={statusItems} />
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Battlefield</p>
@@ -840,14 +1059,38 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         <div className="room-meta">
           <span>Room {state.roomCode}</span>
           <span>{state.winner ? (state.winner === "player" ? "Victory" : "Defeat") : "Objective: Rout the enemy"}</span>
-          <button className="secondary" onClick={() => void exitCurrentGame()}>
-            Exit Chapter View
-          </button>
+          <div className="button-group">
+            <button className="secondary" onClick={endTurn} disabled={state.phase !== "player" || state.status !== "battle"}>
+              End Player Phase
+            </button>
+            {canRestart ? <button onClick={restartMap}>Restart Map</button> : null}
+            {canEndGame ? (
+              <button className="secondary" onClick={() => void endGame()}>
+                End Game
+              </button>
+            ) : null}
+            <button className="secondary" onClick={() => void exitCurrentGame()}>
+              Exit Chapter View
+            </button>
+          </div>
         </div>
       </div>
+      <div className="panel battle-tab-bar" role="tablist" aria-label="Battle panels">
+        <button className={activeMobileTab === "map" ? "secondary is-active" : "secondary"} onClick={() => setActiveMobileTab("map")} role="tab" aria-selected={activeMobileTab === "map"}>Map</button>
+        <button
+          className={activeMobileTab === "actions" ? "secondary is-active" : "secondary"}
+          onClick={() => setActiveMobileTab("actions")}
+          role="tab"
+          aria-selected={activeMobileTab === "actions"}
+          title={actionBadgeHint}
+        >
+          Actions <span className="tab-badge">{formatTabCount(actionCount)}</span>
+        </button>
+        <button className={activeMobileTab === "detail" ? "secondary is-active" : "secondary"} onClick={() => setActiveMobileTab("detail")} role="tab" aria-selected={activeMobileTab === "detail"}>Detail <span className="tab-badge">{detailCount}</span></button>
+        <button className={activeMobileTab === "log" ? "secondary is-active" : "secondary"} onClick={() => setActiveMobileTab("log")} role="tab" aria-selected={activeMobileTab === "log"}>Log <span className="tab-badge">{formatTabCount(state.logs.length)}</span></button>
+      </div>
       <div className="layout battle-layout">
-        <BattleLog logs={state.logs} />
-        <section className="panel map-panel">
+        <section className={`panel map-panel battle-pane ${activeMobileTab === "map" ? "is-active" : "is-inactive"}`}>
           <div className="grid-board" style={{ gridTemplateColumns: `repeat(${state.map.width}, 1fr)` }}>
             {state.map.tiles.flatMap((row, y) =>
               row.map((tile, x) => {
@@ -861,11 +1104,12 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                 const isSelected = occupant?.id === selectedUnit?.id;
                 const isAttackTarget = selectedUnit ? unitCanAttack(selectedUnit, occupant) : false;
                 const isHealTarget = selectedUnit ? unitCanHeal(selectedUnit, occupant) : false;
+                const isEnemyMovementTile = hoveredEnemyMovementTiles.has(tileKey({ x, y }));
 
                 return (
                   <button
                     key={`${x}-${y}`}
-                    className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""} ${isHealTarget ? "heal-target" : ""}`}
+                    className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""} ${isHealTarget ? "heal-target" : ""} ${isEnemyMovementTile ? "enemy-range" : ""}`}
                     style={{ backgroundImage: `url(${getTerrainImage(tile.type)})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
                     title={TERRAIN_STYLE[tile.type]?.label || tile.type}
                     onMouseEnter={() => setHoveredUnitId(occupant?.id ?? null)}
@@ -911,84 +1155,88 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
             )}
           </div>
         </section>
-        <section className="panel">
+        <section className={`panel battle-pane actions-panel ${activeMobileTab === "actions" ? "is-active" : "is-inactive"}`}>
           <h3>Actions</h3>
           {selectedUnit ? (
             <div className="selected-card">
-              <div className="unit-stats">
-                <strong>{selectedUnit.name}</strong>
-                <span>{selectedUnit.className}</span>
-                <span>HP {selectedUnit.stats.hp}/{selectedUnit.stats.maxHp}</span>
-                <span>MOV {selectedUnit.stats.mov} - RNG {selectedUnit.stats.range}</span>
-                <div className="health-bar detail-health-bar">
-                  <div className="health-bar-fill" style={{ width: `${healthPercent(selectedUnit)}%` }} />
+              <div className="actions-unit-header">
+                <img className="actions-unit-portrait" src={selectedUnit.portraitUrl} alt={`${selectedUnit.name} portrait`} />
+                <div className="actions-unit-meta">
+                  <strong>{selectedUnit.name}</strong>
+                  <span>{selectedUnit.className}</span>
+                  <span>HP {selectedUnit.stats.hp}/{selectedUnit.stats.maxHp}</span>
+                  <div className="health-bar detail-health-bar">
+                    <div className="health-bar-fill" style={{ width: `${healthPercent(selectedUnit)}%` }} />
+                  </div>
+                  <span className="muted">{selectedUnit.moved ? "Movement spent" : "Movement available"}</span>
                 </div>
-                <span>{selectedUnit.moved ? "Movement spent this turn" : "Movement available"}</span>
               </div>
-              <div className="unit-equipment">
-                <h4>Equipment</h4>
-                <span>{selectedUnit.equippedWeapon ? `Equipped: ${selectedUnit.equippedWeapon.name}` : "No weapon equipped"}</span>
-                {selectedUnit.inventory.weapons.length > 0 ? (
-                  <div className="button-group">
-                    {selectedUnit.inventory.weapons.map((weapon) => (
-                      <button
-                        key={weapon.id}
-                        className="small-button"
-                        onClick={() => equipWeapon(selectedUnit.id, weapon.id)}
-                        disabled={selectedUnit.equippedWeapon?.id === weapon.id}
-                      >
-                        Equip {weapon.name}
-                      </button>
+              <div className="collapsible-section">
+                <button className="collapsible-toggle secondary" onClick={() => setStatsOpen((o) => !o)}>
+                  Stats {statsOpen ? "▲" : "▼"}
+                </button>
+                {statsOpen ? (
+                  <div className="actions-stat-grid">
+                    {UNIT_DETAIL_STAT_ORDER.map((statKey) => (
+                      <div key={statKey} className="detail-stat">
+                        <span>{LEVEL_UP_STAT_LABELS[statKey]}</span>
+                        <strong>{selectedUnit.stats[statKey]}</strong>
+                      </div>
                     ))}
-                    {selectedUnit.equippedWeapon && (
-                      <button className="small-button" onClick={() => equipWeapon(selectedUnit.id, null)}>Unequip</button>
-                    )}
                   </div>
                 ) : null}
               </div>
               <div className="unit-inventory">
                 <h4>Inventory</h4>
-                {selectedUnit.inventory.items.length > 0 ? (
-                  <div className="button-group">
-                    {selectedUnit.inventory.items.map((item) => (
-                      <button key={item.id} className="small-button" onClick={() => useItem(selectedUnit.id, item.id)}>
-                        Use {item.name}
-                      </button>
+                {selectedUnit.inventory.weapons.length === 0 && selectedUnit.inventory.items.length === 0 ? (
+                  <span className="muted">No items</span>
+                ) : null}
+                {selectedUnit.inventory.weapons.length > 0 ? (
+                  <div className="inventory-list">
+                    {selectedUnit.inventory.weapons.map((weapon) => (
+                      <div key={weapon.id} className="inventory-item">
+                        <div className="inventory-item-info">
+                          <span>{weapon.name}{selectedUnit.equippedWeapon?.id === weapon.id ? " (E)" : ""}</span>
+                          <small className="muted">{weapon.type} · {weapon.might} might</small>
+                        </div>
+                        {selectedUnit.equippedWeapon?.id === weapon.id ? (
+                          <button className="small-button" onClick={() => equipWeapon(selectedUnit.id, null)}>Unequip</button>
+                        ) : (
+                          <button className="small-button" onClick={() => equipWeapon(selectedUnit.id, weapon.id)}>Equip</button>
+                        )}
+                      </div>
                     ))}
                   </div>
-                ) : <span>No items</span>}
+                ) : null}
+                {selectedUnit.inventory.items.length > 0 ? (
+                  <div className="inventory-list">
+                    {selectedUnit.inventory.items.map((item) => (
+                      <div key={item.id} className="inventory-item">
+                        <div className="inventory-item-info">
+                          <span>{item.name}</span>
+                        </div>
+                        <button className="small-button" onClick={() => useItem(selectedUnit.id, item.id)}>
+                          Use
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-              <div className="unit-actions">
-                <h4>Actions</h4>
-                <div className="button-group">
-                  {selectedUnit.moved && !selectedUnit.acted ? (
-                    <button className="small-button" onClick={() => cancelMove(selectedUnit.id)}>Cancel Move</button>
-                  ) : null}
-                  <button className="small-button" onClick={() => waitUnit(selectedUnit.id)}>Wait</button>
-                </div>
+              <div className="actions-footer">
+                {selectedUnit.moved && !selectedUnit.acted ? (
+                  <button className="small-button" onClick={() => cancelMove(selectedUnit.id)}>Return</button>
+                ) : null}
+                <button className="small-button" onClick={() => waitUnit(selectedUnit.id)}>Wait</button>
               </div>
             </div>
           ) : (
-            <p className="muted">Select one of your units, move onto a highlighted tile, then click an enemy to attack if they are in range.</p>
+            <p className="muted">Select one of your units, move onto a highlighted tile, then click an enemy to attack if in range.</p>
           )}
-          <div className="turn-actions">
-            <h4>Turn Actions</h4>
-            <div className="button-group">
-              <button className="secondary" onClick={endTurn} disabled={state.phase !== "player" || state.status !== "battle"}>
-                End Player Phase
-              </button>
-              {canRestart ? <button onClick={restartMap}>Restart Map</button> : null}
-              {canEndGame ? (
-                <button className="secondary" onClick={() => void endGame()}>
-                  End Game
-                </button>
-              ) : null}
-            </div>
-          </div>
         </section>
-        <section className="panel unit-detail-panel">
+        <section className={`panel unit-detail-panel battle-pane ${activeMobileTab === "detail" ? "is-active" : "is-inactive"}`}>
           <h3>Unit Detail</h3>
-          {hoveredUnit ? (
+          {hoveredUnit && hoveredUnit.team === "enemy" ? (
             <div className="detail-card">
               <div className="detail-overview">
                 <div className="detail-main">
@@ -998,7 +1246,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                       {hoveredUnit.name} - {hoveredUnit.className}
                     </strong>
                     <span className="detail-meta-line">Lv {hoveredUnit.level} | EXP {hoveredUnit.exp}</span>
-                    <span>{hoveredUnit.team === "player" ? "Allied Unit" : "Enemy Unit"}</span>
+                    <span>Enemy Unit</span>
                     <span>
                       HP {hoveredUnit.stats.hp}/{hoveredUnit.stats.maxHp}
                     </span>
@@ -1068,17 +1316,18 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
               ) : null}
             </div>
           ) : (
-            <p className="muted">Hover a unit to inspect it.</p>
+            <p className="muted">Hover an enemy unit to inspect it and see a combat preview.</p>
           )}
         </section>
       </div>
+      <BattleLog logs={state.logs} className={`battle-footer-log battle-pane ${activeMobileTab === "log" ? "is-active" : "is-inactive"}`} />
     </AppShell>
   );
 }
 
-function BattleLog({ logs }: { logs: GameSnapshot["logs"] }) {
+function BattleLog({ logs, className }: { logs: GameSnapshot["logs"]; className?: string }) {
   return (
-    <section className="panel log-panel">
+    <section className={`panel log-panel ${className ?? ""}`}>
       <h3>Battle Log</h3>
       <div className="log-list">
         {logs.map((log, index) => (

@@ -490,6 +490,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   useItem: (unitId, itemId) => {
     const roomCode = get().state?.roomCode;
     if (roomCode) {
+      set({ combatAnimation: null });
       get().socket?.emit("useItem", { roomCode, unitId, itemId });
     }
   },
