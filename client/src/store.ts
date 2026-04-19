@@ -7,6 +7,7 @@ import type {
   GameState,
   JoinRoomResponse,
   LevelUpEvent,
+  PromotionEvent,
   ProfileCharacterRecord,
   ServerToClientEvents,
   TurnPhase,
@@ -39,6 +40,8 @@ type AppStore = {
   combatAnimation: { unitId: string; className: UnitClass; type: 'attack' | 'heal'; blocksUpdates: boolean } | null;
   levelUpEvent: LevelUpEvent | null;
   shownLevelUpKey: string | null;
+  promotionEvent: PromotionEvent | null;
+  shownPromotionKey: string | null;
   phaseAnnouncement: PhaseAnnouncement | null;
   resolvedPhase: TurnPhase | null;
   pendingEnemyStates: GameState[];
@@ -73,6 +76,7 @@ type AppStore = {
   removeActiveGame: (roomCode: string) => Promise<void>;
   clearCombatAnimation: () => void;
   clearLevelUpEvent: () => void;
+  clearPromotionEvent: () => void;
   clearPhaseAnnouncement: () => void;
   refreshProfileCharacters: () => Promise<void>;
   refreshActiveGames: () => Promise<void>;
@@ -120,6 +124,7 @@ function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () =
       state: nextState,
       combatAnimation,
       levelUpEvent: null,
+      promotionEvent: null,
       phaseAnnouncement: null
     });
     return true;
@@ -132,7 +137,23 @@ function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () =
         state: nextState,
         combatAnimation: null,
         levelUpEvent: nextState.latestLevelUpEvent,
+        promotionEvent: null,
         shownLevelUpKey: key,
+        phaseAnnouncement: null
+      });
+      return true;
+    }
+  }
+
+  if (nextState.latestPromotionEvent) {
+    const key = `${nextState.latestPromotionEvent.unitId}-${nextState.latestPromotionEvent.newClassName}-${nextState.latestPromotionEvent.newLevel}`;
+    if (get().shownPromotionKey !== key) {
+      set({
+        state: nextState,
+        combatAnimation: null,
+        levelUpEvent: null,
+        promotionEvent: nextState.latestPromotionEvent,
+        shownPromotionKey: key,
         phaseAnnouncement: null
       });
       return true;
@@ -145,6 +166,7 @@ function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () =
       state: nextState,
       combatAnimation: null,
       levelUpEvent: null,
+      promotionEvent: null,
       phaseAnnouncement
     });
     return true;
@@ -154,6 +176,7 @@ function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () =
     state: nextState,
     combatAnimation: null,
     levelUpEvent: null,
+    promotionEvent: null,
     phaseAnnouncement: null,
     resolvedPhase: nextState.phase
   });
@@ -242,6 +265,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   combatAnimation: null,
   levelUpEvent: null,
   shownLevelUpKey: null,
+  promotionEvent: null,
+  shownPromotionKey: null,
   phaseAnnouncement: null,
   resolvedPhase: null,
   pendingEnemyStates: [],
@@ -258,8 +283,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     socket.on("disconnect", () => set({ connected: false }));
     socket.on("stateUpdated", (newState) => {
       if (get().view === "game") {
-        const { combatAnimation, levelUpEvent, phaseAnnouncement, pendingEnemyStates } = get();
-        if (combatAnimation || levelUpEvent || phaseAnnouncement) {
+        const { combatAnimation, levelUpEvent, promotionEvent, phaseAnnouncement, pendingEnemyStates } = get();
+        if (combatAnimation || levelUpEvent || promotionEvent || phaseAnnouncement) {
           set({ pendingEnemyStates: [...pendingEnemyStates, newState] });
           return;
         }
@@ -708,7 +733,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (currentState.latestLevelUpEvent) {
-      set({ combatAnimation: null, levelUpEvent: currentState.latestLevelUpEvent });
+      set({ combatAnimation: null, levelUpEvent: currentState.latestLevelUpEvent, promotionEvent: null });
+      return;
+    }
+
+    if (currentState.latestPromotionEvent) {
+      set({ combatAnimation: null, levelUpEvent: null, promotionEvent: currentState.latestPromotionEvent });
       return;
     }
 
@@ -729,13 +759,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    const phaseAnnouncement = getPhaseAnnouncement(get().resolvedPhase, currentState.phase);
-    if (phaseAnnouncement) {
-      set({ levelUpEvent: null, phaseAnnouncement });
+    if (currentState.latestPromotionEvent) {
+      set({ levelUpEvent: null, promotionEvent: currentState.latestPromotionEvent, resolvedPhase: currentState.phase });
       return;
     }
 
-    set({ levelUpEvent: null, resolvedPhase: currentState.phase });
+    const phaseAnnouncement = getPhaseAnnouncement(get().resolvedPhase, currentState.phase);
+    if (phaseAnnouncement) {
+      set({ levelUpEvent: null, promotionEvent: null, phaseAnnouncement });
+      return;
+    }
+
+    set({ levelUpEvent: null, promotionEvent: null, resolvedPhase: currentState.phase });
+    flushPendingStates(set, get);
+  },
+  clearPromotionEvent: () => {
+    const currentState = get().state;
+    if (!currentState) {
+      set({ promotionEvent: null });
+      flushPendingStates(set, get);
+      return;
+    }
+
+    const phaseAnnouncement = getPhaseAnnouncement(get().resolvedPhase, currentState.phase);
+    if (phaseAnnouncement) {
+      set({ promotionEvent: null, phaseAnnouncement });
+      return;
+    }
+
+    set({ promotionEvent: null, resolvedPhase: currentState.phase });
     flushPendingStates(set, get);
   },
   clearPhaseAnnouncement: () => {

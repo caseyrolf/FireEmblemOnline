@@ -1683,6 +1683,19 @@ ul {
   color: #d6deec;
 }
 
+.promotion-modal {
+  border-color: rgba(255, 213, 111, 0.5);
+  background: linear-gradient(180deg, rgba(46, 34, 14, 0.96), rgba(21, 15, 8, 0.97));
+}
+
+.promotion-modal .eyebrow {
+  color: #ffe29b;
+}
+
+.promotion-modal .level-up-stat-row strong {
+  color: #ffd56f;
+}
+
 .battle-outcome-card h2 {
   margin: 0.2rem 0 0.4rem;
   font-size: clamp(1.5rem, 4vw, 2.25rem);

@@ -8,10 +8,15 @@ import {
   calculateCritChance,
   canUnitAttackAtDistance,
   checkIfDoubles,
+  CLASS_GROWTH_RATES,
   CLASS_TEMPLATES,
+  getPromotedClass,
   getPortraitForUnit,
   getTerrainDefense,
+  isStaffClass,
+  PROMOTION_BONUSES,
   type AuthUser,
+  type BaseUnitClass,
   type CharacterDraft,
   type ClientToServerEvents,
   type CombatLogEntry,
@@ -481,7 +486,8 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     outcomeRecorded: false,
     chapter: 1,
     latestCombatEvent: null,
-    latestLevelUpEvent: null
+    latestLevelUpEvent: null,
+    latestPromotionEvent: null
   };
 }
 
@@ -551,6 +557,10 @@ async function getOrLoadRoom(roomCode: string) {
   // Add latestLevelUpEvent if missing
   if (!("latestLevelUpEvent" in persistedState)) {
     (persistedState as any).latestLevelUpEvent = null;
+  }
+  // Add latestPromotionEvent if missing
+  if (!("latestPromotionEvent" in persistedState)) {
+    (persistedState as any).latestPromotionEvent = null;
   }
   // Add chat history if missing
   if (!("chatMessages" in persistedState) || !Array.isArray((persistedState as any).chatMessages)) {
@@ -793,17 +803,24 @@ function seededEnemyStats(className: UnitClass, level: number = 1, enemyCount: n
 function getWeaponsForClass(className: UnitClass): Weapon[] {
   switch (className) {
     case "Lord":
+    case "Great Lord":
     case "Mercenary":
+    case "Hero":
       return WEAPONS.filter(w => w.type === "Sword").slice(0, 2);
     case "Knight":
+    case "General":
       return WEAPONS.filter(w => w.type === "Lance").slice(0, 2);
     case "Brigand":
+    case "Warrior":
       return WEAPONS.filter(w => w.type === "Axe").slice(0, 2);
     case "Archer":
+    case "Sniper":
       return WEAPONS.filter(w => w.type === "Bow").slice(0, 2);
     case "Mage":
+    case "Sage":
       return WEAPONS.filter(w => w.type === "Magic Tome").slice(0, 2);
     case "Cleric":
+    case "Bishop":
       return WEAPONS.filter(w => w.type === "Staff").slice(0, 2);
     default:
       return [];
@@ -981,22 +998,14 @@ function resetBattleState(state: GameState, options?: { preservePlayerProgress?:
   state.outcomeRecorded = false;
   state.latestCombatEvent = null;
   state.latestLevelUpEvent = null;
+  state.latestPromotionEvent = null;
   state.map = createMap(state.chapter);
   spawnUnits(state, options);
 }
 
 function rollLevelUpStatGains(unit: Unit) {
-  const growthRates: Record<UnitClass, Partial<Record<keyof Unit["stats"], number>>> = {
-    Lord: { maxHp: 80, str: 55, mag: 10, skl: 55, spd: 60, def: 40, res: 30 },
-    Mercenary: { maxHp: 75, str: 55, mag: 5, skl: 65, spd: 65, def: 35, res: 20 },
-    Mage: { maxHp: 60, str: 0, mag: 70, skl: 50, spd: 55, def: 20, res: 45 },
-    Cleric: { maxHp: 65, str: 0, mag: 65, skl: 45, spd: 50, def: 15, res: 60 },
-    Knight: { maxHp: 85, str: 60, mag: 0, skl: 45, spd: 30, def: 70, res: 15 },
-    Brigand: { maxHp: 85, str: 65, mag: 0, skl: 35, spd: 40, def: 30, res: 10 },
-    Archer: { maxHp: 70, str: 55, mag: 0, skl: 65, spd: 55, def: 25, res: 20 }
-  };
   const gains: Array<{ stat: keyof Unit["stats"]; gain: number; newValue: number }> = [];
-  const rates = growthRates[unit.className];
+  const rates = CLASS_GROWTH_RATES[unit.className];
   const statsToRoll: Array<keyof Unit["stats"]> = ["maxHp", "str", "mag", "skl", "spd", "def", "res"];
   for (const stat of statsToRoll) {
     const chance = rates[stat] ?? 0;
@@ -1014,6 +1023,52 @@ function rollLevelUpStatGains(unit: Unit) {
   return gains;
 }
 
+function applyPromotion(unit: Unit) {
+  const promotedClass = getPromotedClass(unit.className);
+  if (!promotedClass || unit.level < 20) {
+    return null;
+  }
+
+  const oldClassName = unit.className as BaseUnitClass;
+  const promotionBonuses = PROMOTION_BONUSES[oldClassName];
+  const promotedTemplate = CLASS_TEMPLATES[promotedClass];
+  const statsToBoost: Array<keyof Unit["stats"]> = ["maxHp", "str", "mag", "skl", "spd", "def", "res", "mov", "range"];
+  const statGains: Array<{ stat: keyof Unit["stats"]; gain: number; newValue: number }> = [];
+
+  for (const stat of statsToBoost) {
+    let gain = 0;
+    const bonus = promotionBonuses[stat] ?? 0;
+    if (bonus > 0) {
+      unit.stats[stat] += bonus;
+      gain += bonus;
+    }
+
+    const promotedFloor = promotedTemplate[stat];
+    if (unit.stats[stat] < promotedFloor) {
+      const floorGain = promotedFloor - unit.stats[stat];
+      unit.stats[stat] = promotedFloor;
+      gain += floorGain;
+    }
+
+    if (gain > 0) {
+      statGains.push({ stat, gain, newValue: unit.stats[stat] });
+    }
+  }
+
+  const maxHpGain = statGains.find((gain) => gain.stat === "maxHp")?.gain ?? 0;
+  if (maxHpGain > 0) {
+    unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + maxHpGain);
+  }
+
+  unit.className = promotedClass;
+
+  return {
+    oldClassName,
+    newClassName: promotedClass,
+    statGains
+  };
+}
+
 function grantExp(state: GameState, unit: Unit, amount: number) {
   if (amount <= 0 || !unit.alive) {
     return;
@@ -1023,6 +1078,7 @@ function grantExp(state: GameState, unit: Unit, amount: number) {
     unit.exp -= EXP_PER_LEVEL;
     unit.level += 1;
     const statGains = rollLevelUpStatGains(unit);
+    const promotion = applyPromotion(unit);
     state.latestLevelUpEvent = {
       unitId: unit.id,
       unitName: unit.name,
@@ -1032,7 +1088,21 @@ function grantExp(state: GameState, unit: Unit, amount: number) {
       expRemainder: unit.exp,
       statGains
     };
+    state.latestPromotionEvent = promotion
+      ? {
+          unitId: unit.id,
+          unitName: unit.name,
+          oldClassName: promotion.oldClassName,
+          newClassName: promotion.newClassName,
+          team: unit.team,
+          newLevel: unit.level,
+          statGains: promotion.statGains
+        }
+      : null;
     pushLog(state, `${unit.name} reached level ${unit.level}!`);
+    if (promotion) {
+      pushLog(state, `${unit.name} promoted to ${promotion.newClassName}!`);
+    }
   }
 }
 
@@ -1126,7 +1196,7 @@ function resolveHeal(state: GameState, healer: Unit, target: Unit) {
   }
   const actualHeal = Math.min(healAmount, target.stats.maxHp - target.stats.hp);
   target.stats.hp = Math.min(target.stats.maxHp, target.stats.hp + actualHeal);
-  if (healer.className === "Cleric") {
+  if (isStaffClass(healer.className)) {
     grantExp(state, healer, CLERIC_HEAL_EXP);
   }
   pushLog(state, `${healer.name} healed ${target.name} for ${actualHeal} HP.`);
@@ -1163,6 +1233,7 @@ async function takeEnemyPhase(room: Room) {
   state.phase = "enemy";
   state.latestCombatEvent = null;
   state.latestLevelUpEvent = null;
+  state.latestPromotionEvent = null;
   state.activePlayerId = null;
   resetEnemyActions(state);
   pushLog(state, "Enemy phase begins.");
@@ -1448,6 +1519,7 @@ io.on("connection", (socket) => {
     await emitState(room);
     room.state.latestCombatEvent = null;
     room.state.latestLevelUpEvent = null;
+    room.state.latestPromotionEvent = null;
     if (room.state.phase === "player" && room.state.status !== "complete" && allPlayerUnitsActed(room.state)) {
       await takeEnemyPhase(room);
       return;
@@ -1469,8 +1541,8 @@ io.on("connection", (socket) => {
       io.to(socket.id).emit("errorMessage", "A unit cannot heal itself.");
       return;
     }
-    if (healer.className !== "Cleric" || target.team !== "player") {
-      io.to(socket.id).emit("errorMessage", "Only clerics can heal allied units.");
+    if (!isStaffClass(healer.className) || target.team !== "player") {
+      io.to(socket.id).emit("errorMessage", "Only staff classes can heal allied units.");
       return;
     }
     const distance = Math.abs(healer.position.x - target.position.x) + Math.abs(healer.position.y - target.position.y);
@@ -1486,6 +1558,7 @@ io.on("connection", (socket) => {
     await emitState(room);
     room.state.latestCombatEvent = null;
     room.state.latestLevelUpEvent = null;
+    room.state.latestPromotionEvent = null;
     if (room.state.phase === "player" && allPlayerUnitsActed(room.state)) {
       await takeEnemyPhase(room);
       return;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF } from "../../shared/game";
+import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -56,7 +56,14 @@ const CLASS_WEAPON_TYPES: Record<Unit["className"], string[]> = {
   Cleric: ["Staff"],
   Knight: ["Lance"],
   Brigand: ["Axe"],
-  Archer: ["Bow"]
+  Archer: ["Bow"],
+  "Great Lord": ["Sword"],
+  Hero: ["Sword"],
+  Sage: ["Magic Tome"],
+  Bishop: ["Staff"],
+  General: ["Lance"],
+  Warrior: ["Axe"],
+  Sniper: ["Bow"]
 };
 
 function getCompatibleWeaponTypes(className: Unit["className"]): string[] {
@@ -322,7 +329,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   const endGame = useAppStore((store) => store.endGame);
   const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
   const [name, setName] = useState("");
-  const [className, setClassName] = useState(CLASS_OPTIONS[0]);
+  const [className, setClassName] = useState(BASE_CLASS_OPTIONS[0]);
   const [portraitUrl, setPortraitUrl] = useState<string | undefined>(undefined);
   const isHost = state.hostId === playerId;
   const statusItems = [
@@ -408,7 +415,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
           <label className="field">
             <span>Class</span>
             <select value={className} onChange={(event) => setClassName(event.target.value as typeof className)}>
-              {CLASS_OPTIONS.map((option) => (
+              {BASE_CLASS_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -628,6 +635,62 @@ function LevelUpOverlay() {
   );
 }
 
+function PromotionOverlay() {
+  const promotionEvent = useAppStore((store) => store.promotionEvent);
+  const clearPromotionEvent = useAppStore((store) => store.clearPromotionEvent);
+
+  useEffect(() => {
+    if (!promotionEvent) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      clearPromotionEvent();
+    }, 3400);
+    return () => window.clearTimeout(timer);
+  }, [promotionEvent, clearPromotionEvent]);
+
+  return (
+    <AnimatePresence>
+      {promotionEvent ? (
+        <motion.div
+          key={`${promotionEvent.unitId}-${promotionEvent.newClassName}-${promotionEvent.newLevel}`}
+          className="level-up-overlay"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div
+            className="level-up-modal promotion-modal"
+            initial={{ scale: 0.92, y: 16, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.96, y: -16, opacity: 0 }}
+            transition={{ duration: 0.24 }}
+          >
+            <p className="eyebrow">Promotion</p>
+            <h3>{promotionEvent.unitName} promoted!</h3>
+            <p className="muted level-up-subtitle">
+              {promotionEvent.oldClassName} -&gt; {promotionEvent.newClassName}
+            </p>
+            <div className="level-up-stats">
+              {promotionEvent.statGains.length > 0 ? (
+                promotionEvent.statGains.map((gain) => (
+                  <div key={`${gain.stat}-${gain.newValue}`} className="level-up-stat-row">
+                    <span>{LEVEL_UP_STAT_LABELS[gain.stat]}</span>
+                    <strong>+{gain.gain}</strong>
+                    <span>{gain.newValue}</span>
+                  </div>
+                ))
+              ) : (
+                <p className="muted">No stat changes from promotion.</p>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
 function BattleOutcomeOverlay({
   winner,
   show,
@@ -687,7 +750,7 @@ function BattleOutcomeOverlay({
 }
 
 function unitCanAttack(unit: Unit, hoveredUnit: Unit | undefined) {
-  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "enemy" || unit.className === "Cleric") {
+  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "enemy" || isStaffClass(unit.className)) {
     return false;
   }
   const gap = Math.abs(unit.position.x - hoveredUnit.position.x) + Math.abs(unit.position.y - hoveredUnit.position.y);
@@ -695,7 +758,7 @@ function unitCanAttack(unit: Unit, hoveredUnit: Unit | undefined) {
 }
 
 function unitCanHeal(unit: Unit, hoveredUnit: Unit | undefined) {
-  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "player" || unit.className !== "Cleric") {
+  if (!hoveredUnit || unit.team !== "player" || hoveredUnit.team !== "player" || !isStaffClass(unit.className)) {
     return false;
   }
   const gap = Math.abs(unit.position.x - hoveredUnit.position.x) + Math.abs(unit.position.y - hoveredUnit.position.y);
@@ -1151,6 +1214,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
       <AttackAnimation />
       <PhaseAnnouncementOverlay />
       <LevelUpOverlay />
+      <PromotionOverlay />
       <BattleOutcomeOverlay
         winner={state.winner}
         show={showOutcomeOverlay}
