@@ -62,6 +62,7 @@ type AppStore = {
   moveUnit: (unitId: string, x: number, y: number) => void;
   attackUnit: (attackerId: string, targetId: string) => void;
   healUnit: (healerId: string, targetId: string) => void;
+  danceUnit: (dancerId: string, targetId: string) => void;
   waitUnit: (unitId: string) => void;
   cancelMove: (unitId: string) => void;
   equipWeapon: (unitId: string, weaponId: string | null) => void;
@@ -602,6 +603,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const roomCode = get().state?.roomCode;
     if (roomCode) {
       get().socket?.emit("healUnit", { roomCode, healerId, targetId });
+    }
+  },
+  danceUnit: (dancerId, targetId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("danceUnit", { roomCode, dancerId, targetId });
     }
   },
   waitUnit: (unitId) => {

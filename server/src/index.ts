@@ -15,6 +15,7 @@ import {
   getPortraitForUnit,
   getTerrainDefense,
   isStaffClass,
+  isDancerClass,
   PROMOTION_BONUSES,
   type AuthUser,
   type BaseUnitClass,
@@ -910,6 +911,9 @@ function getWeaponsForClass(className: UnitClass): Weapon[] {
     case "Cleric":
     case "Bishop":
       return WEAPONS.filter(w => w.type === "Staff").slice(0, 2);
+    case "Dancer":
+    case "Diva":
+      return [];
     default:
       return [];
   }
@@ -1652,6 +1656,18 @@ async function takeEnemyPhase(room: Room) {
         pushLog(state, `${unit.name}'s Renewal restores ${healAmt} HP.`);
       }
     }
+    // Skill: Relief — restore 20% max HP at the start of player phase if no ally is adjacent
+    for (const unit of state.units.filter((u) => u.alive && u.team === "player" && u.skillId === "relief")) {
+      const hasAdjacentAlly = state.units.some(
+        (other) => other.alive && other.id !== unit.id && other.team === "player" &&
+          Math.abs(other.position.x - unit.position.x) + Math.abs(other.position.y - unit.position.y) === 1
+      );
+      if (!hasAdjacentAlly && unit.stats.hp < unit.stats.maxHp) {
+        const healAmt = Math.max(1, Math.floor(unit.stats.maxHp * 0.2));
+        unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + healAmt);
+        pushLog(state, `${unit.name}'s Relief restores ${healAmt} HP.`);
+      }
+    }
     pushLog(state, `Turn ${state.turnCount} begins.`);
   }
   await emitState(room);
@@ -1930,6 +1946,58 @@ io.on("connection", (socket) => {
     room.state.latestLevelUpEvent = null;
     room.state.latestPromotionEvent = null;
     if (room.state.phase === "player" && allPlayerUnitsActed(room.state)) {
+      await takeEnemyPhase(room);
+      return;
+    }
+    await emitState(room);
+  });
+
+  socket.on("danceUnit", async ({ roomCode, dancerId, targetId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      return;
+    }
+    const dancer = findUnit(room.state, dancerId);
+    const target = findUnit(room.state, targetId);
+    if (!dancer || !target || dancer.acted || !canControlUnit(room.state, playerId, dancer)) {
+      return;
+    }
+    if (!isDancerClass(dancer.className)) {
+      io.to(socket.id).emit("errorMessage", "Only Dancers can use Dance.");
+      return;
+    }
+    if (target.team !== "player" || !target.alive) {
+      io.to(socket.id).emit("errorMessage", "Dance can only target an allied unit.");
+      return;
+    }
+    if (target.id === dancer.id) {
+      io.to(socket.id).emit("errorMessage", "A dancer cannot dance for themselves.");
+      return;
+    }
+    if (!target.acted) {
+      io.to(socket.id).emit("errorMessage", "That unit has not acted yet and does not need to be danced.");
+      return;
+    }
+    const dist = Math.abs(dancer.position.x - target.position.x) + Math.abs(dancer.position.y - target.position.y);
+    if (dist > 1) {
+      io.to(socket.id).emit("errorMessage", "Dance target must be adjacent.");
+      return;
+    }
+    // Grant the target a second turn
+    target.acted = false;
+    target.moved = false;
+    target.originalPosition = { ...target.position };
+    pushLog(room.state, `${dancer.name} danced for ${target.name}, granting them another turn!`);
+    // Galeforce: 50% chance the dancer is not marked as acted
+    const galeforceActivated = dancer.skillId === "galeforce" && Math.random() < 0.5;
+    if (galeforceActivated) {
+      pushLog(room.state, `${dancer.name}'s Galeforce activates! They can still act this turn.`);
+    } else {
+      dancer.acted = true;
+    }
+    room.state.selectedUnitId = null;
+    room.state.highlights = [];
+    if (allPlayerUnitsActed(room.state)) {
       await takeEnemyPhase(room);
       return;
     }

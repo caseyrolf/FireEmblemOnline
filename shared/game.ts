@@ -1,7 +1,7 @@
 export type TerrainType = "grass" | "forest" | "fort" | "mountain" | "goal";
 export type UnitTeam = "player" | "enemy";
-export type BaseUnitClass = "Lord" | "Mercenary" | "Mage" | "Cleric" | "Knight" | "Brigand" | "Archer";
-export type PromotedUnitClass = "Great Lord" | "Hero" | "Sage" | "Bishop" | "General" | "Warrior" | "Sniper";
+export type BaseUnitClass = "Lord" | "Mercenary" | "Mage" | "Cleric" | "Knight" | "Brigand" | "Archer" | "Dancer";
+export type PromotedUnitClass = "Great Lord" | "Hero" | "Sage" | "Bishop" | "General" | "Warrior" | "Sniper" | "Diva";
 export type UnitClass = BaseUnitClass | PromotedUnitClass;
 export type TurnPhase = "player" | "enemy" | "victory" | "defeat" | "basecamp";
 
@@ -16,7 +16,8 @@ export type SkillId =
   | "aether" | "dual-strike-plus"
   | "ignis" | "lifetaker"
   | "great-shield" | "counter"
-  | "certain-blow";
+  | "certain-blow"
+  | "galeforce" | "relief";
 
 export type Skill = {
   id: SkillId;
@@ -200,6 +201,7 @@ export type ClientToServerEvents = {
   moveUnit: (payload: { roomCode: string; unitId: string; position: Position }) => void;
   attackUnit: (payload: { roomCode: string; attackerId: string; targetId: string }) => void;
   healUnit: (payload: { roomCode: string; healerId: string; targetId: string }) => void;
+  danceUnit: (payload: { roomCode: string; dancerId: string; targetId: string }) => void;
   waitUnit: (payload: { roomCode: string; unitId: string }) => void;
   cancelMove: (payload: { roomCode: string; unitId: string }) => void;
   equipWeapon: (payload: { roomCode: string; unitId: string; weaponId: string | null }) => void;
@@ -259,13 +261,15 @@ export const CLASS_TEMPLATES: Record<UnitClass, Stats> = {
   Knight: { hp: 27, maxHp: 27, str: 9, mag: 0, skl: 6, spd: 4, def: 11, res: 1, mov: 4, range: 1 },
   Brigand: { hp: 26, maxHp: 26, str: 8, mag: 0, skl: 5, spd: 5, def: 5, res: 1, mov: 5, range: 1 },
   Archer: { hp: 21, maxHp: 21, str: 7, mag: 0, skl: 8, spd: 6, def: 4, res: 2, mov: 5, range: 2 },
+  Dancer: { hp: 17, maxHp: 17, str: 4, mag: 2, skl: 5, spd: 11, def: 3, res: 5, mov: 6, range: 1 },
   "Great Lord": { hp: 28, maxHp: 28, str: 10, mag: 2, skl: 11, spd: 10, def: 8, res: 6, mov: 6, range: 1 },
   Hero: { hp: 30, maxHp: 30, str: 11, mag: 0, skl: 12, spd: 11, def: 8, res: 4, mov: 6, range: 1 },
   Sage: { hp: 23, maxHp: 23, str: 0, mag: 12, skl: 9, spd: 9, def: 5, res: 10, mov: 6, range: 2 },
   Bishop: { hp: 24, maxHp: 24, str: 0, mag: 10, skl: 8, spd: 8, def: 4, res: 12, mov: 6, range: 1 },
   General: { hp: 33, maxHp: 33, str: 12, mag: 0, skl: 8, spd: 6, def: 14, res: 4, mov: 5, range: 1 },
   Warrior: { hp: 31, maxHp: 31, str: 12, mag: 0, skl: 8, spd: 8, def: 7, res: 3, mov: 6, range: 1 },
-  Sniper: { hp: 27, maxHp: 27, str: 10, mag: 0, skl: 12, spd: 9, def: 6, res: 4, mov: 6, range: 2 }
+  Sniper: { hp: 27, maxHp: 27, str: 10, mag: 0, skl: 12, spd: 9, def: 6, res: 4, mov: 6, range: 2 },
+  Diva: { hp: 22, maxHp: 22, str: 6, mag: 4, skl: 8, spd: 14, def: 5, res: 8, mov: 7, range: 1 }
 };
 
 export const SKILLS: Record<SkillId, Skill> = {
@@ -290,6 +294,8 @@ export const SKILLS: Record<SkillId, Skill> = {
   "great-shield":  { id: "great-shield",   name: "Great Shield",  description: "15% chance to negate all physical damage from an attack." },
   counter:         { id: "counter",         name: "Counter",       description: "When struck by a physical attack, deal the same damage back to the attacker." },
   "certain-blow":  { id: "certain-blow",   name: "Certain Blow",  description: "+30 Hit when initiating combat." },
+  galeforce:       { id: "galeforce",       name: "Galeforce",     description: "50% chance after using Dance that the dancer can still take an action this turn." },
+  relief:          { id: "relief",          name: "Relief",        description: "Recover 20% max HP at the start of player phase if no ally is adjacent." },
 };
 
 export const CLASS_SKILLS: Record<UnitClass, [SkillId, SkillId]> = {
@@ -300,6 +306,7 @@ export const CLASS_SKILLS: Record<UnitClass, [SkillId, SkillId]> = {
   Knight:        ["defense-plus-2",  "pavise"],
   Brigand:       ["despoil",         "wrath"],
   Archer:        ["bowfaire",        "prescience"],
+  Dancer:        ["galeforce",        "relief"],
   "Great Lord":  ["aether",          "charm"],
   Hero:          ["sol",             "dual-strike-plus"],
   Sage:          ["tomefaire",        "ignis"],
@@ -307,10 +314,11 @@ export const CLASS_SKILLS: Record<UnitClass, [SkillId, SkillId]> = {
   General:       ["pavise",          "great-shield"],
   Warrior:       ["wrath",           "counter"],
   Sniper:        ["bowfaire",        "certain-blow"],
+  Diva:          ["galeforce",        "relief"],
 };
 
-export const BASE_CLASS_OPTIONS: BaseUnitClass[] = ["Lord", "Mercenary", "Mage", "Cleric", "Knight", "Brigand", "Archer"];
-export const PROMOTED_CLASS_OPTIONS: PromotedUnitClass[] = ["Great Lord", "Hero", "Sage", "Bishop", "General", "Warrior", "Sniper"];
+export const BASE_CLASS_OPTIONS: BaseUnitClass[] = ["Lord", "Mercenary", "Mage", "Cleric", "Knight", "Brigand", "Archer", "Dancer"];
+export const PROMOTED_CLASS_OPTIONS: PromotedUnitClass[] = ["Great Lord", "Hero", "Sage", "Bishop", "General", "Warrior", "Sniper", "Diva"];
 export const CLASS_OPTIONS: UnitClass[] = [...BASE_CLASS_OPTIONS, ...PROMOTED_CLASS_OPTIONS];
 
 export const PROMOTION_CLASS_MAP: Record<BaseUnitClass, PromotedUnitClass> = {
@@ -320,7 +328,8 @@ export const PROMOTION_CLASS_MAP: Record<BaseUnitClass, PromotedUnitClass> = {
   Cleric: "Bishop",
   Knight: "General",
   Brigand: "Warrior",
-  Archer: "Sniper"
+  Archer: "Sniper",
+  Dancer: "Diva"
 };
 
 export const BASE_CLASS_BY_PROMOTED: Record<PromotedUnitClass, BaseUnitClass> = {
@@ -330,7 +339,8 @@ export const BASE_CLASS_BY_PROMOTED: Record<PromotedUnitClass, BaseUnitClass> = 
   Bishop: "Cleric",
   General: "Knight",
   Warrior: "Brigand",
-  Sniper: "Archer"
+  Sniper: "Archer",
+  Diva: "Dancer"
 };
 
 export const PROMOTION_BONUSES: Record<BaseUnitClass, Partial<Record<keyof Stats, number>>> = {
@@ -340,7 +350,8 @@ export const PROMOTION_BONUSES: Record<BaseUnitClass, Partial<Record<keyof Stats
   Cleric: { maxHp: 3, mag: 2, skl: 1, spd: 1, def: 1, res: 3, mov: 1 },
   Knight: { maxHp: 5, str: 2, skl: 1, spd: 1, def: 3, res: 2, mov: 1 },
   Brigand: { maxHp: 5, str: 3, skl: 1, spd: 1, def: 2, res: 1, mov: 1 },
-  Archer: { maxHp: 4, str: 2, skl: 3, spd: 2, def: 1, res: 1, mov: 1 }
+  Archer: { maxHp: 4, str: 2, skl: 3, spd: 2, def: 1, res: 1, mov: 1 },
+  Dancer: { maxHp: 3, str: 1, skl: 2, spd: 2, def: 1, res: 2, mov: 1 }
 };
 
 export const CLASS_GROWTH_RATES: Record<UnitClass, Partial<Record<keyof Stats, number>>> = {
@@ -351,13 +362,15 @@ export const CLASS_GROWTH_RATES: Record<UnitClass, Partial<Record<keyof Stats, n
   Knight: { maxHp: 85, str: 60, mag: 0, skl: 45, spd: 30, def: 70, res: 15 },
   Brigand: { maxHp: 85, str: 65, mag: 0, skl: 35, spd: 40, def: 30, res: 10 },
   Archer: { maxHp: 70, str: 55, mag: 0, skl: 65, spd: 55, def: 25, res: 20 },
+  Dancer: { maxHp: 55, str: 30, mag: 25, skl: 45, spd: 75, def: 20, res: 40 },
   "Great Lord": { maxHp: 90, str: 65, mag: 20, skl: 65, spd: 65, def: 50, res: 40 },
   Hero: { maxHp: 85, str: 65, mag: 10, skl: 75, spd: 75, def: 45, res: 30 },
   Sage: { maxHp: 70, str: 0, mag: 80, skl: 60, spd: 65, def: 30, res: 55 },
   Bishop: { maxHp: 75, str: 0, mag: 75, skl: 55, spd: 60, def: 25, res: 70 },
   General: { maxHp: 95, str: 70, mag: 0, skl: 55, spd: 40, def: 80, res: 25 },
   Warrior: { maxHp: 95, str: 75, mag: 0, skl: 45, spd: 50, def: 40, res: 20 },
-  Sniper: { maxHp: 80, str: 65, mag: 0, skl: 75, spd: 65, def: 35, res: 30 }
+  Sniper: { maxHp: 80, str: 65, mag: 0, skl: 75, spd: 65, def: 35, res: 30 },
+  Diva: { maxHp: 65, str: 40, mag: 35, skl: 55, spd: 85, def: 30, res: 50 }
 };
 
 export const WEAPONS: Weapon[] = [
@@ -409,7 +422,9 @@ const PORTRAIT_STYLE: Record<UnitClass, { fill: string; accent: string; mark: st
   Bishop: { fill: "#bcc2cb", accent: "#aedbb2", mark: "Bp" },
   General: { fill: "#323a45", accent: "#f1f5ff", mark: "Gn" },
   Warrior: { fill: "#5f3024", accent: "#ffd19c", mark: "W" },
-  Sniper: { fill: "#2f5429", accent: "#f1e89a", mark: "Sn" }
+  Sniper: { fill: "#2f5429", accent: "#f1e89a", mark: "Sn" },
+  Dancer: { fill: "#9b3d8a", accent: "#f7c5e8", mark: "D" },
+  Diva: { fill: "#72286b", accent: "#ffd6f0", mark: "Dv" }
 };
 
 export const CLASS_IMAGES: Record<UnitClass, string> = {
@@ -426,7 +441,9 @@ export const CLASS_IMAGES: Record<UnitClass, string> = {
   Bishop: "/classes/cleric.png",
   General: "/classes/knight.png",
   Warrior: "/classes/brigand.png",
-  Sniper: "/classes/archer.png"
+  Sniper: "/classes/archer.png",
+  Dancer: "/classes/cleric.png",
+  Diva: "/classes/cleric.png"
 };
 
 export const CLASS_ATTACK_GIFS: Record<UnitClass, string | null> = {
@@ -441,6 +458,8 @@ export const CLASS_ATTACK_GIFS: Record<UnitClass, string | null> = {
   Hero: "/classes/mercenary_attack.gif",
   Sage: "/classes/mage_attack.gif",
   Bishop: null,
+  Dancer: null,
+  Diva: null,
   General: "/classes/knight_attack.gif",
   Warrior: "/classes/brigand_attack.gif",
   Sniper: "/classes/archer_attack.gif",
@@ -492,6 +511,10 @@ export function canUnitAttackAtDistance(unit: Unit, gap: number): boolean {
 
 export function isStaffClass(className: UnitClass): boolean {
   return className === "Cleric" || className === "Bishop";
+}
+
+export function isDancerClass(className: UnitClass): boolean {
+  return className === "Dancer" || className === "Diva";
 }
 
 export function isPromotedClass(className: UnitClass): className is PromotedUnitClass {

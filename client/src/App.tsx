@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId, type TerrainTile } from "../../shared/game";
+import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, isDancerClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId, type TerrainTile } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -59,13 +59,15 @@ const CLASS_WEAPON_TYPES: Record<Unit["className"], string[]> = {
   Knight: ["Lance"],
   Brigand: ["Axe"],
   Archer: ["Bow"],
+  Dancer: ["Sword"],
   "Great Lord": ["Sword"],
   Hero: ["Sword"],
   Sage: ["Magic Tome"],
   Bishop: ["Staff"],
   General: ["Lance"],
   Warrior: ["Axe"],
-  Sniper: ["Bow"]
+  Sniper: ["Bow"],
+  Diva: ["Sword"]
 };
 
 function getCompatibleWeaponTypes(className: Unit["className"]): string[] {
@@ -802,6 +804,17 @@ function unitCanHeal(unit: Unit, hoveredUnit: Unit | undefined) {
   return gap <= unit.stats.range;
 }
 
+function unitCanDance(unit: Unit, hoveredUnit: Unit | undefined) {
+  if (!hoveredUnit || !isDancerClass(unit.className) || hoveredUnit.id === unit.id) {
+    return false;
+  }
+  if (hoveredUnit.team !== "player" || !hoveredUnit.acted) {
+    return false;
+  }
+  const gap = Math.abs(unit.position.x - hoveredUnit.position.x) + Math.abs(unit.position.y - hoveredUnit.position.y);
+  return gap === 1;
+}
+
 function enemyMovementRange(state: GameSnapshot, unit: Unit) {
   const frontier: Array<{ position: Position; cost: number }> = [{ position: unit.position, cost: 0 }];
   const bestCost = new Map<string, number>([[tileKey(unit.position), 0]]);
@@ -1080,6 +1093,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const moveUnit = useAppStore((store) => store.moveUnit);
   const attackUnit = useAppStore((store) => store.attackUnit);
   const healUnit = useAppStore((store) => store.healUnit);
+  const danceUnit = useAppStore((store) => store.danceUnit);
   const waitUnit = useAppStore((store) => store.waitUnit);
   const cancelMove = useAppStore((store) => store.cancelMove);
   const equipWeapon = useAppStore((store) => store.equipWeapon);
@@ -1317,12 +1331,13 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                 const isSelected = Boolean(selectedUnit && occupant && occupant.id === selectedUnit.id);
                 const isAttackTarget = selectedUnit ? unitCanAttack(selectedUnit, occupant) : false;
                 const isHealTarget = selectedUnit ? unitCanHeal(selectedUnit, occupant) : false;
+                const isDanceTarget = selectedUnit ? unitCanDance(selectedUnit, occupant) : false;
                 const isEnemyMovementTile = hoveredEnemyMovementTiles.has(tileKey({ x, y }));
 
                 return (
                   <button
                     key={`${x}-${y}`}
-                    className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""} ${isHealTarget ? "heal-target" : ""} ${isEnemyMovementTile ? "enemy-range" : ""}`}
+                    className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""} ${isHealTarget ? "heal-target" : ""} ${isDanceTarget ? "dance-target" : ""} ${isEnemyMovementTile ? "enemy-range" : ""}`}
                     style={{ backgroundImage: `url(${getTerrainImage(tile.type)})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
                     title={TERRAIN_STYLE[tile.type]?.label || tile.type}
                     onMouseEnter={() => { setHoveredUnitId(occupant?.id ?? null); setHoveredTile({ x, y, tile }); }}
@@ -1333,6 +1348,8 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                           attackUnit(selectedUnit.id, occupant.id);
                         } else if (selectedUnit && occupant.team === "player" && selectedUnit.ownerId === playerId && !selectedUnit.acted && occupant.id !== selectedUnit.id && unitCanHeal(selectedUnit, occupant)) {
                           healUnit(selectedUnit.id, occupant.id);
+                        } else if (selectedUnit && occupant.team === "player" && selectedUnit.ownerId === playerId && !selectedUnit.acted && occupant.id !== selectedUnit.id && unitCanDance(selectedUnit, occupant)) {
+                          danceUnit(selectedUnit.id, occupant.id);
                         } else if (occupant.team === "player" && occupant.ownerId === playerId && !occupant.acted) {
                           selectUnit(occupant.id);
                         }
@@ -1435,6 +1452,9 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
               <div className="actions-footer">
                 {selectedUnit.moved && !selectedUnit.acted ? (
                   <button className="small-button" onClick={() => cancelMove(selectedUnit.id)}>Return</button>
+                ) : null}
+                {isDancerClass(selectedUnit.className) && !selectedUnit.acted ? (
+                  <span className="muted" style={{ fontSize: "0.8em" }}>Click an adjacent acted ally on the map to Dance</span>
                 ) : null}
                 <button className="small-button" onClick={() => waitUnit(selectedUnit.id)}>Wait</button>
               </div>
