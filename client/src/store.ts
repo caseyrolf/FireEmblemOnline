@@ -69,6 +69,7 @@ type AppStore = {
   buyItem: (playerId: string, itemId: string, unitId: string) => void;
   advanceToBaseCamp: () => void;
   advanceToChapter: () => void;
+  sendChatMessage: (text: string) => void;
   removeActiveGame: (roomCode: string) => Promise<void>;
   clearCombatAnimation: () => void;
   clearLevelUpEvent: () => void;
@@ -621,6 +622,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (roomCode) {
       get().socket?.emit("advanceToChapter", { roomCode });
     }
+  },
+  sendChatMessage: (text) => {
+    const roomCode = get().state?.roomCode;
+    const trimmed = text.replace(/\s+/g, " ").trim();
+    if (!roomCode || !trimmed) {
+      return;
+    }
+    get().socket?.emit("sendChatMessage", { roomCode, text: trimmed.slice(0, 240) });
   },
   refreshProfileCharacters: async () => {
     const token = get().authToken;

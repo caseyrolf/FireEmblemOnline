@@ -475,6 +475,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
           </div>
         </section>
         <BattleLog logs={state.logs} />
+        <GameChatPanel messages={state.chatMessages} />
       </div>
     </AppShell>
   );
@@ -842,6 +843,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
       </div>
       <div className="layout basecamp-log-layout">
         <BattleLog logs={state.logs} />
+        <GameChatPanel messages={state.chatMessages} />
       </div>
       <div className="layout basecamp-layout">
         <section className="panel">
@@ -983,6 +985,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const equipWeapon = useAppStore((store) => store.equipWeapon);
   const useItem = useAppStore((store) => store.useItem);
   const advanceToBaseCamp = useAppStore((store) => store.advanceToBaseCamp);
+  const sendChatMessage = useAppStore((store) => store.sendChatMessage);
   const endTurn = useAppStore((store) => store.endTurn);
   const restartMap = useAppStore((store) => store.restartMap);
   const endGame = useAppStore((store) => store.endGame);
@@ -990,9 +993,9 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
   const [animatedPositions, setAnimatedPositions] = useState<Record<string, Position>>({});
   const [animationState, setAnimationState] = useState<Record<string, { path: Position[]; startedAt: number }>>({});
-  const [activeMobileTab, setActiveMobileTab] = useState<"map" | "actions" | "detail" | "log">(() => {
+  const [activeMobileTab, setActiveMobileTab] = useState<"map" | "actions" | "detail" | "log" | "chat">(() => {
     const stored = typeof window !== "undefined" ? window.sessionStorage.getItem(BATTLE_TAB_STORAGE_KEY) : null;
-    return stored === "actions" || stored === "detail" || stored === "log" || stored === "map" ? stored : "map";
+    return stored === "actions" || stored === "detail" || stored === "log" || stored === "chat" || stored === "map" ? stored : "map";
   });
   const [statsOpen, setStatsOpen] = useState(true);
 
@@ -1017,6 +1020,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
     ? (selectedUnit.inventory.items.length + selectedUnit.inventory.weapons.length + (selectedUnit.moved && !selectedUnit.acted ? 1 : 0) + 1)
     : 0;
   const detailCount = hoveredUnit ? 1 : 0;
+  const chatCount = state.chatMessages.length;
   const actionBadgeHint = selectedUnit
     ? `Actions include ${selectedUnit.inventory.weapons.length} weapons, ${selectedUnit.inventory.items.length} items, wait, and conditional cancel move.`
     : "No unit selected, so no actions are available.";
@@ -1194,6 +1198,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         </button>
         <button className={activeMobileTab === "detail" ? "secondary is-active" : "secondary"} onClick={() => setActiveMobileTab("detail")} role="tab" aria-selected={activeMobileTab === "detail"}>Detail <span className="tab-badge">{detailCount}</span></button>
         <button className={activeMobileTab === "log" ? "secondary is-active" : "secondary"} onClick={() => setActiveMobileTab("log")} role="tab" aria-selected={activeMobileTab === "log"}>Log <span className="tab-badge">{formatTabCount(state.logs.length)}</span></button>
+        <button className={activeMobileTab === "chat" ? "secondary is-active" : "secondary"} onClick={() => setActiveMobileTab("chat")} role="tab" aria-selected={activeMobileTab === "chat"}>Chat <span className="tab-badge">{formatTabCount(chatCount)}</span></button>
       </div>
       <div className="layout battle-layout">
         <section className={`panel map-panel battle-pane ${activeMobileTab === "map" ? "is-active" : "is-inactive"}`}>
@@ -1422,7 +1427,87 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         </section>
       </div>
       <BattleLog logs={state.logs} className={`battle-footer-log battle-pane ${activeMobileTab === "log" ? "is-active" : "is-inactive"}`} />
+      <GameChatPanel
+        messages={state.chatMessages}
+        onSend={sendChatMessage}
+        localPlayerId={playerId}
+        className={`battle-footer-chat battle-pane ${activeMobileTab === "chat" ? "is-active" : "is-inactive"}`}
+      />
     </AppShell>
+  );
+}
+
+function GameChatPanel({
+  messages,
+  onSend,
+  localPlayerId,
+  className
+}: {
+  messages: GameSnapshot["chatMessages"];
+  onSend?: (text: string) => void;
+  localPlayerId?: string | null;
+  className?: string;
+}) {
+  const sendChatMessage = useAppStore((store) => store.sendChatMessage);
+  const [text, setText] = useState("");
+  const submitMessage = (onSend ?? sendChatMessage);
+
+  function submit() {
+    const trimmed = text.replace(/\s+/g, " ").trim();
+    if (!trimmed) {
+      return;
+    }
+    submitMessage(trimmed);
+    setText("");
+  }
+
+  function getTimeLabel(iso: string) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+      return "--:--";
+    }
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  return (
+    <section className={`panel game-chat-panel ${className ?? ""}`}>
+      <h3>Room Chat</h3>
+      <div className="game-chat-messages" role="log" aria-live="polite" aria-label="Room chat messages">
+        {messages.length > 0 ? (
+          messages.map((message) => {
+            const isOwn = localPlayerId ? message.playerId === localPlayerId : false;
+            return (
+              <article key={message.id} className={`game-chat-message${isOwn ? " own" : ""}`}>
+                <div className="game-chat-meta">
+                  <strong>{message.playerName}</strong>
+                  <span>{getTimeLabel(message.createdAt)}</span>
+                </div>
+                <p>{message.text}</p>
+              </article>
+            );
+          })
+        ) : (
+          <p className="muted">No chat messages yet. Say hello to your party.</p>
+        )}
+      </div>
+      <div className="game-chat-input-row">
+        <input
+          value={text}
+          maxLength={240}
+          placeholder="Type a room message"
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <button onClick={submit} disabled={!text.trim()}>
+          Send
+        </button>
+      </div>
+    </section>
   );
 }
 

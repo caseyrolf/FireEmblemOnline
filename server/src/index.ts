@@ -231,6 +231,7 @@ const PLAYER_INITIATE_COMBAT_EXP = 20;
 const PLAYER_DEFEND_COMBAT_EXP = 10;
 const EXP_PER_LEVEL = 100;
 const CAMPAIGN_FINAL_CHAPTER = 5;
+const CHAT_HISTORY_LIMIT = 80;
 
 function createRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -243,6 +244,10 @@ function createRoomCode() {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function sanitizeChatText(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
 function makeTile(type: TerrainTile["type"]): TerrainTile {
@@ -471,6 +476,7 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     selectedUnitId: null,
     highlights: [],
     logs: [{ id: cryptoRandomId(), text: `${hostName} opened room ${roomCode}.` }],
+    chatMessages: [],
     winner: null,
     outcomeRecorded: false,
     chapter: 1,
@@ -546,6 +552,10 @@ async function getOrLoadRoom(roomCode: string) {
   if (!("latestLevelUpEvent" in persistedState)) {
     (persistedState as any).latestLevelUpEvent = null;
   }
+  // Add chat history if missing
+  if (!("chatMessages" in persistedState) || !Array.isArray((persistedState as any).chatMessages)) {
+    (persistedState as any).chatMessages = [];
+  }
 
   const room: Room = {
     state: persistedState,
@@ -558,6 +568,19 @@ async function getOrLoadRoom(roomCode: string) {
 function pushLog(state: GameState, text: string) {
   const entry: CombatLogEntry = { id: cryptoRandomId(), text };
   state.logs = [entry, ...state.logs].slice(0, 24);
+}
+
+function pushChat(state: GameState, playerId: string, playerName: string, text: string) {
+  state.chatMessages = [
+    ...state.chatMessages,
+    {
+      id: cryptoRandomId(),
+      playerId,
+      playerName,
+      text,
+      createdAt: new Date().toISOString()
+    }
+  ].slice(-CHAT_HISTORY_LIMIT);
 }
 
 function findPlayer(state: GameState, playerId: string) {
@@ -1670,6 +1693,25 @@ io.on("connection", (socket) => {
     room.state.phase = "defeat";
     room.state.winner = "enemy";
     pushLog(room.state, "The DM ended the game.");
+    await emitState(room);
+  });
+
+  socket.on("sendChatMessage", async ({ roomCode, text }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || !playerId) {
+      return;
+    }
+    const player = room.state.players.find((entry) => entry.id === playerId);
+    if (!player) {
+      return;
+    }
+
+    const trimmed = sanitizeChatText(text);
+    if (!trimmed) {
+      return;
+    }
+
+    pushChat(room.state, player.id, player.name, trimmed);
     await emitState(room);
   });
 

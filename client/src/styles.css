@@ -1174,6 +1174,77 @@ select {
   margin-top: var(--space-4);
 }
 
+.battle-footer-chat {
+  margin-top: var(--space-4);
+}
+
+.game-chat-panel {
+  min-height: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.game-chat-messages {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.game-chat-message {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.game-chat-message.own {
+  border-color: rgba(240, 191, 99, 0.75);
+  background: rgba(240, 191, 99, 0.12);
+}
+
+.game-chat-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.game-chat-message p {
+  margin: 0;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.game-chat-input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.game-chat-input-row button {
+  white-space: nowrap;
+}
+
+.app-shell.game-shell .game-chat-message {
+  border: 1px solid rgba(157, 111, 63, 0.35);
+  background: rgba(255, 250, 241, 0.64);
+}
+
+.app-shell.game-shell .game-chat-message.own {
+  border-color: rgba(186, 128, 67, 0.86);
+  background: linear-gradient(180deg, rgba(242, 206, 145, 0.45), rgba(236, 221, 192, 0.8));
+}
+
+.app-shell.game-shell .game-chat-message p {
+  color: #2f1b11;
+}
+
 .log-list {
   display: flex;
   flex-direction: row;
@@ -1402,6 +1473,10 @@ ul {
     display: none;
   }
 
+  .game-chat-messages {
+    max-height: 220px;
+  }
+
   .home-dashboard {
     grid-template-columns: 1fr;
   }
@@ -1494,6 +1569,10 @@ ul {
   .home-unit-meta strong,
   .home-unit-meta span {
     font-size: 1.35rem;
+  }
+
+  .game-chat-input-row {
+    grid-template-columns: 1fr;
   }
 }
 

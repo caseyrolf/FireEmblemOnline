@@ -106,6 +106,14 @@ export type CombatLogEntry = {
   text: string;
 };
 
+export type ChatMessage = {
+  id: string;
+  playerId: string;
+  playerName: string;
+  text: string;
+  createdAt: string;
+};
+
 export type GameMap = {
   width: number;
   height: number;
@@ -131,6 +139,7 @@ export type GameState = {
   selectedUnitId: string | null;
   highlights: Position[];
   logs: CombatLogEntry[];
+  chatMessages: ChatMessage[];
   winner: UnitTeam | null;
   outcomeRecorded: boolean;
   chapter: number;
@@ -167,6 +176,7 @@ export type ClientToServerEvents = {
   buyItem: (payload: { roomCode: string; playerId: string; itemId: string; unitId: string }) => void;
   advanceToBaseCamp: (payload: { roomCode: string }) => void;
   advanceToChapter: (payload: { roomCode: string }) => void;
+  sendChatMessage: (payload: { roomCode: string; text: string }) => void;
   leaveRoom: (payload: { roomCode: string }, callback: (response: { ok: boolean }) => void) => void;
 };
 
