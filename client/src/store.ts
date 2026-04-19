@@ -9,6 +9,7 @@ import type {
   LevelUpEvent,
   ProfileCharacterRecord,
   ServerToClientEvents,
+  TurnPhase,
   UnitClass
 } from "../../shared/game";
 
@@ -18,6 +19,8 @@ type SavedSession = {
   playerName: string;
   userId?: string;
 };
+
+type PhaseAnnouncement = Extract<TurnPhase, "player" | "enemy" | "victory" | "defeat">;
 
 type AppStore = {
   socket: Socket<ServerToClientEvents, ClientToServerEvents> | null;
@@ -35,6 +38,9 @@ type AppStore = {
   attackingUnitId?: never;
   combatAnimation: { unitId: string; className: UnitClass; type: 'attack' | 'heal'; blocksUpdates: boolean } | null;
   levelUpEvent: LevelUpEvent | null;
+  shownLevelUpKey: string | null;
+  phaseAnnouncement: PhaseAnnouncement | null;
+  resolvedPhase: TurnPhase | null;
   pendingEnemyStates: GameState[];
   connect: () => void;
   hydrateAuth: () => Promise<void>;
@@ -66,6 +72,7 @@ type AppStore = {
   removeActiveGame: (roomCode: string) => Promise<void>;
   clearCombatAnimation: () => void;
   clearLevelUpEvent: () => void;
+  clearPhaseAnnouncement: () => void;
   refreshProfileCharacters: () => Promise<void>;
   refreshActiveGames: () => Promise<void>;
   saveProfileCharacter: (name: string, className: UnitClass, portraitUrl?: string) => Promise<boolean>;
@@ -76,6 +83,91 @@ type AppStore = {
 const serverUrl = import.meta.env.VITE_SERVER_URL ?? "http://localhost:3001";
 const SESSION_KEY = "fire-emblem-online-session";
 const AUTH_KEY = "fire-emblem-online-auth";
+const ANNOUNCED_PHASES = new Set<PhaseAnnouncement>(["player", "enemy", "victory", "defeat"]);
+
+function buildCombatAnimation(state: GameState) {
+  if (!state.latestCombatEvent) {
+    return null;
+  }
+
+  const { attackerId, type } = state.latestCombatEvent;
+  const attacker = state.units.find((unit) => unit.id === attackerId);
+  if (!attacker) {
+    return null;
+  }
+
+  return {
+    unitId: attacker.id,
+    className: attacker.className,
+    type,
+    blocksUpdates: state.phase === "enemy"
+  };
+}
+
+function getPhaseAnnouncement(resolvedPhase: TurnPhase | null, nextPhase: TurnPhase): PhaseAnnouncement | null {
+  if (!resolvedPhase || resolvedPhase === nextPhase || !ANNOUNCED_PHASES.has(nextPhase as PhaseAnnouncement)) {
+    return null;
+  }
+
+  return nextPhase as PhaseAnnouncement;
+}
+
+function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () => AppStore, nextState: GameState) {
+  const combatAnimation = buildCombatAnimation(nextState);
+  if (combatAnimation) {
+    set({
+      state: nextState,
+      combatAnimation,
+      levelUpEvent: null,
+      phaseAnnouncement: null
+    });
+    return true;
+  }
+
+  if (nextState.latestLevelUpEvent) {
+    const key = `${nextState.latestLevelUpEvent.unitId}-${nextState.latestLevelUpEvent.newLevel}`;
+    if (get().shownLevelUpKey !== key) {
+      set({
+        state: nextState,
+        combatAnimation: null,
+        levelUpEvent: nextState.latestLevelUpEvent,
+        shownLevelUpKey: key,
+        phaseAnnouncement: null
+      });
+      return true;
+    }
+  }
+
+  const phaseAnnouncement = getPhaseAnnouncement(get().resolvedPhase, nextState.phase);
+  if (phaseAnnouncement) {
+    set({
+      state: nextState,
+      combatAnimation: null,
+      levelUpEvent: null,
+      phaseAnnouncement
+    });
+    return true;
+  }
+
+  set({
+    state: nextState,
+    combatAnimation: null,
+    levelUpEvent: null,
+    phaseAnnouncement: null,
+    resolvedPhase: nextState.phase
+  });
+  return false;
+}
+
+function flushPendingStates(set: (partial: Partial<AppStore>) => void, get: () => AppStore) {
+  while (get().pendingEnemyStates.length > 0) {
+    const [nextState, ...rest] = get().pendingEnemyStates;
+    set({ pendingEnemyStates: rest });
+    if (presentStateUpdate(set, get, nextState)) {
+      return;
+    }
+  }
+}
 
 function readSavedSession() {
   const raw = window.localStorage.getItem(SESSION_KEY);
@@ -148,6 +240,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   attackingUnitId: null as never,
   combatAnimation: null,
   levelUpEvent: null,
+  shownLevelUpKey: null,
+  phaseAnnouncement: null,
+  resolvedPhase: null,
   pendingEnemyStates: [],
   connect: () => {
     if (get().socket) {
@@ -162,30 +257,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     socket.on("disconnect", () => set({ connected: false }));
     socket.on("stateUpdated", (newState) => {
       if (get().view === "game") {
-        const { combatAnimation, pendingEnemyStates } = get();
-        // Only queue when an enemy-phase animation is blocking updates
-        if (combatAnimation?.blocksUpdates) {
+        const { combatAnimation, levelUpEvent, phaseAnnouncement, pendingEnemyStates } = get();
+        if (combatAnimation || levelUpEvent || phaseAnnouncement) {
           set({ pendingEnemyStates: [...pendingEnemyStates, newState] });
           return;
         }
-        if (newState.latestCombatEvent) {
-          const { attackerId, type } = newState.latestCombatEvent;
-          const attacker = newState.units.find((u: { id: string }) => u.id === attackerId);
-          if (attacker) {
-            // Enemy-phase animations block subsequent updates; player-phase ones do not
-            const blocksUpdates = newState.phase === "enemy";
-            set({
-              state: newState,
-              combatAnimation: { unitId: attacker.id, className: attacker.className, type, blocksUpdates },
-              ...(newState.latestLevelUpEvent ? { levelUpEvent: newState.latestLevelUpEvent } : {})
-            });
-            return;
-          }
-        }
-        set({
-          state: newState,
-          ...(newState.latestLevelUpEvent ? { levelUpEvent: newState.latestLevelUpEvent } : {})
-        });
+        presentStateUpdate(set, get, newState);
       }
     });
     socket.on("errorMessage", (message) => set({ error: message }));
@@ -286,7 +363,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         playerName: "",
         state: null,
         view: "home",
+        combatAnimation: null,
         levelUpEvent: null,
+        shownLevelUpKey: null,
+        phaseAnnouncement: null,
+        resolvedPhase: null,
+        pendingEnemyStates: [],
         error: null
       });
   },
@@ -406,7 +488,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
     }
     clearSavedSession();
-    set({ state: null, playerId: null, view: "home", levelUpEvent: null });
+    set({
+      state: null,
+      playerId: null,
+      view: "home",
+      combatAnimation: null,
+      levelUpEvent: null,
+      shownLevelUpKey: null,
+      phaseAnnouncement: null,
+      resolvedPhase: null,
+      pendingEnemyStates: []
+    });
     await get().refreshActiveGames();
   },
   endGame: () => {
@@ -599,27 +691,50 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
   clearCombatAnimation: () => {
-    const pending = get().pendingEnemyStates;
-    if (pending.length === 0) {
+    const currentState = get().state;
+    if (!currentState) {
       set({ combatAnimation: null });
+      flushPendingStates(set, get);
       return;
     }
-    const combatIdx = pending.findIndex(s => s.latestCombatEvent !== null);
-    if (combatIdx === -1) {
-      set({ combatAnimation: null, state: pending[pending.length - 1], pendingEnemyStates: [] });
+
+    if (currentState.latestLevelUpEvent) {
+      set({ combatAnimation: null, levelUpEvent: currentState.latestLevelUpEvent });
       return;
     }
-    const combatState = pending[combatIdx];
-    const rest = pending.slice(combatIdx + 1);
-    const { attackerId, type } = combatState.latestCombatEvent!;
-    const attacker = combatState.units.find(u => u.id === attackerId);
-    set({
-      combatAnimation: attacker ? { unitId: attacker.id, className: attacker.className, type, blocksUpdates: true } : null,
-      state: combatState,
-      ...(combatState.latestLevelUpEvent ? { levelUpEvent: combatState.latestLevelUpEvent } : {}),
-      pendingEnemyStates: rest,
-    });
+
+    const phaseAnnouncement = getPhaseAnnouncement(get().resolvedPhase, currentState.phase);
+    if (phaseAnnouncement) {
+      set({ combatAnimation: null, phaseAnnouncement });
+      return;
+    }
+
+    set({ combatAnimation: null, resolvedPhase: currentState.phase });
+    flushPendingStates(set, get);
   },
-  clearLevelUpEvent: () => set({ levelUpEvent: null }),
+  clearLevelUpEvent: () => {
+    const currentState = get().state;
+    if (!currentState) {
+      set({ levelUpEvent: null });
+      flushPendingStates(set, get);
+      return;
+    }
+
+    const phaseAnnouncement = getPhaseAnnouncement(get().resolvedPhase, currentState.phase);
+    if (phaseAnnouncement) {
+      set({ levelUpEvent: null, phaseAnnouncement });
+      return;
+    }
+
+    set({ levelUpEvent: null, resolvedPhase: currentState.phase });
+    flushPendingStates(set, get);
+  },
+  clearPhaseAnnouncement: () => {
+    set({
+      phaseAnnouncement: null,
+      resolvedPhase: get().state?.phase ?? get().resolvedPhase
+    });
+    flushPendingStates(set, get);
+  },
   clearError: () => set({ error: null })
 }));

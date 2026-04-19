@@ -227,7 +227,10 @@ const PLAYER_LIMIT = 8;
 const CHARACTER_LIMIT = 8;
 const SESSION_LENGTH_MS = 1000 * 60 * 60 * 24 * 30;
 const CLERIC_HEAL_EXP = 15;
+const PLAYER_INITIATE_COMBAT_EXP = 20;
+const PLAYER_DEFEND_COMBAT_EXP = 10;
 const EXP_PER_LEVEL = 100;
+const CAMPAIGN_FINAL_CHAPTER = 5;
 
 function createRoomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -258,63 +261,190 @@ function makeTile(type: TerrainTile["type"]): TerrainTile {
 }
 
 function createMap(chapter: number = 1): GameMap {
+  const parseLayout = (rows: string[]) =>
+    rows.map((row) =>
+      row.split("").map((tile): TerrainTile["type"] => {
+        switch (tile) {
+          case "F":
+            return "forest";
+          case "M":
+            return "mountain";
+          case "T":
+            return "fort";
+          case "G":
+          default:
+            return "grass";
+        }
+      })
+    );
+
   if (chapter === 1) {
-    const layout = [
-      ["grass", "grass", "forest", "grass", "grass", "forest", "grass", "goal"],
-      ["grass", "mountain", "mountain", "grass", "forest", "grass", "grass", "grass"],
-      ["fort", "grass", "grass", "grass", "grass", "forest", "mountain", "grass"],
-      ["grass", "forest", "grass", "mountain", "grass", "grass", "mountain", "grass"],
-      ["grass", "grass", "grass", "mountain", "grass", "forest", "grass", "grass"],
-      ["grass", "forest", "grass", "grass", "grass", "grass", "grass", "fort"],
-      ["grass", "grass", "mountain", "forest", "mountain", "grass", "grass", "grass"],
-      ["grass", "grass", "grass", "grass", "grass", "grass", "grass", "grass"]
-    ] as const;
+    const layout = parseLayout([
+      "GGGGFGGGGG",
+      "GGFFGGGGGG",
+      "GGGGMGGGGG",
+      "GGGGMMGGGG",
+      "GTFGGGGFGF",
+      "GGGGGGGGGG",
+      "GGGGFGGGGG",
+      "GGGFGGGGGG",
+      "GGGGGGGGMM",
+      "GGGFGGGMMM"
+    ]);
+
+    layout[1][9] = "goal";
 
     return {
-      width: 8,
-      height: 8,
+      width: 10,
+      height: 10,
       tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
       playerStarts: [
-        { x: 0, y: 7 },
-        { x: 1, y: 7 },
-        { x: 2, y: 7 },
-        { x: 0, y: 6 },
-        { x: 1, y: 6 },
-        { x: 2, y: 5 }
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
       ],
       objective: {
         type: "route",
-        target: { x: 7, y: 0 }
+        target: { x: 9, y: 1 }
       }
     };
   } else if (chapter === 2) {
-    // Chapter 2 map - different layout
-    const layout = [
-      ["grass", "forest", "grass", "mountain", "grass", "grass", "fort", "goal"],
-      ["grass", "grass", "grass", "grass", "forest", "mountain", "grass", "grass"],
-      ["fort", "grass", "mountain", "grass", "grass", "grass", "forest", "grass"],
-      ["grass", "forest", "grass", "grass", "mountain", "grass", "grass", "grass"],
-      ["grass", "grass", "grass", "forest", "grass", "grass", "mountain", "grass"],
-      ["grass", "mountain", "grass", "grass", "grass", "forest", "grass", "fort"],
-      ["grass", "grass", "forest", "mountain", "grass", "grass", "grass", "grass"],
-      ["grass", "grass", "grass", "grass", "grass", "grass", "grass", "grass"]
-    ] as const;
+    // Chapter 2 map - mountain pass gauntlet
+    const layout = parseLayout([
+      "GGGGFGGGGM",
+      "GFGGGGGGMM",
+      "GGGGGGGMMM",
+      "GGFGGGMMMM",
+      "GGGGGGGMMM",
+      "GGGGGGGGMM",
+      "GGTFGGGGGM",
+      "GGGGGGGGGG",
+      "GGGGFGGGGG",
+      "GGGFGGGGGG"
+    ]);
+
+    layout[1][9] = "goal";
 
     return {
-      width: 8,
-      height: 8,
+      width: 10,
+      height: 10,
       tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
       playerStarts: [
-        { x: 0, y: 7 },
-        { x: 1, y: 7 },
-        { x: 2, y: 7 },
-        { x: 0, y: 6 },
-        { x: 1, y: 6 },
-        { x: 2, y: 5 }
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
       ],
       objective: {
         type: "route",
-        target: { x: 7, y: 0 }
+        target: { x: 9, y: 1 }
+      }
+    };
+  } else if (chapter === 3) {
+    // Chapter 3 map - forest ambush corridor
+    const layout = parseLayout([
+      "GGFFGGGGGG",
+      "GFFFGGGFGG",
+      "GGFGGGGFGG",
+      "GGGGGFGGGG",
+      "GGTTGGGGFG",
+      "GGGGGGGGGG",
+      "GGFGGGFFGG",
+      "GGGFGGFGGG",
+      "GGGGGGGGFG",
+      "GGGGFGGGGG"
+    ]);
+
+    layout[1][9] = "goal";
+
+    return {
+      width: 10,
+      height: 10,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
+      ],
+      objective: {
+        type: "route",
+        target: { x: 9, y: 1 }
+      }
+    };
+  } else if (chapter === 4) {
+    // Chapter 4 map - fortress ridge assault
+    const layout = parseLayout([
+      "GGGMMMGGGG",
+      "GGMMMMGGGG",
+      "GGGMMMGGFG",
+      "GGGGGGGFGG",
+      "GTTGGGGGGG",
+      "GGFGGGGGGG",
+      "GGFGGGGFGG",
+      "GGGGGGGGGG",
+      "GGGGFGGGGG",
+      "GGGFGGGGGG"
+    ]);
+
+    layout[1][9] = "goal";
+
+    return {
+      width: 10,
+      height: 10,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
+      ],
+      objective: {
+        type: "route",
+        target: { x: 9, y: 1 }
+      }
+    };
+  } else if (chapter === 5) {
+    // Chapter 5 map - final keep approach
+    const layout = parseLayout([
+      "GGGMMMGGGG",
+      "GGMMMMGGGG",
+      "GMMMMMMGGG",
+      "GGGMMMGFGG",
+      "GTTGGGGFGG",
+      "GGFGGGGGGG",
+      "GGFGGGGGFG",
+      "GGGGGGGFGG",
+      "GGGGFGGGGG",
+      "GGGFGGGGGG"
+    ]);
+
+    layout[1][9] = "goal";
+
+    return {
+      width: 10,
+      height: 10,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
+      ],
+      objective: {
+        type: "route",
+        target: { x: 9, y: 1 }
       }
     };
   }
@@ -454,6 +584,11 @@ function getTile(map: GameMap, position: Position) {
   return map.tiles[position.y]?.[position.x];
 }
 
+function isPassableTile(map: GameMap, position: Position) {
+  const tile = getTile(map, position);
+  return Boolean(tile && tile.type !== "mountain");
+}
+
 function neighbors(position: Position): Position[] {
   return [
     { x: position.x + 1, y: position.y },
@@ -471,13 +606,10 @@ function movementRange(state: GameState, unit: Unit) {
   while (frontier.length > 0) {
     const current = frontier.shift()!;
     for (const next of neighbors(current.position)) {
-      if (!inBounds(state.map, next)) {
+      if (!inBounds(state.map, next) || !isPassableTile(state.map, next)) {
         continue;
       }
-      const tile = getTile(state.map, next);
-      if (!tile || tile.type === "mountain") {
-        continue;
-      }
+      const tile = getTile(state.map, next)!;
       const occupant = unitAt(state, next);
       if (occupant && occupant.id !== unit.id) {
         if (occupant.team !== unit.team) {
@@ -502,6 +634,51 @@ function movementRange(state: GameState, unit: Unit) {
   }
 
   return reachable;
+}
+
+function findNearestOpenSpawn(map: GameMap, desired: Position, occupied: Set<string>) {
+  const fallback: Position = { x: 0, y: 0 };
+  if (!inBounds(map, desired)) {
+    desired = fallback;
+  }
+
+  const queue: Position[] = [desired];
+  const visited = new Set<string>([positionKey(desired)]);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const key = positionKey(current);
+    if (isPassableTile(map, current) && !occupied.has(key)) {
+      occupied.add(key);
+      return current;
+    }
+
+    for (const next of neighbors(current)) {
+      if (!inBounds(map, next)) {
+        continue;
+      }
+      const nextKey = positionKey(next);
+      if (visited.has(nextKey)) {
+        continue;
+      }
+      visited.add(nextKey);
+      queue.push(next);
+    }
+  }
+
+  // Last resort: first available non-mountain tile in scan order.
+  for (let y = 0; y < map.height; y += 1) {
+    for (let x = 0; x < map.width; x += 1) {
+      const candidate = { x, y };
+      const key = positionKey(candidate);
+      if (isPassableTile(map, candidate) && !occupied.has(key)) {
+        occupied.add(key);
+        return candidate;
+      }
+    }
+  }
+
+  return fallback;
 }
 
 function attackableTargets(state: GameState, unit: Unit) {
@@ -548,17 +725,45 @@ function distance(a: Position, b: Position) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
-function seededEnemyStats(className: UnitClass, level: number = 1) {
-  const base = clone(CLASS_TEMPLATES[className]);
+function seededEnemyStats(className: UnitClass, level: number = 1, enemyCount: number = 4) {
+  const template = CLASS_TEMPLATES[className];
+  const base = clone(template);
   const levelBonus = level - 1;
-  base.hp += 4 + levelBonus * 2;
-  base.maxHp += 4 + levelBonus * 2;
-  base.str += 1 + levelBonus;
-  base.mag += 1 + levelBonus;
-  base.skl += levelBonus;
-  base.spd += levelBonus;
-  base.def += levelBonus;
-  base.res += levelBonus;
+
+  // Keep chapter progression meaningful, but lighter now that maps field more enemies.
+  base.hp += 2 + levelBonus;
+  base.maxHp += 2 + levelBonus;
+  base.str += Math.max(0, Math.ceil(levelBonus / 2));
+  base.mag += Math.max(0, Math.ceil(levelBonus / 2));
+  base.skl += Math.max(0, Math.floor(levelBonus / 2));
+  base.spd += Math.max(0, Math.floor(levelBonus / 2));
+  base.def += Math.max(0, Math.floor(levelBonus / 2));
+  base.res += Math.max(0, Math.floor(levelBonus / 2));
+
+  const crowdPenalty = Math.max(0, enemyCount - 4);
+  if (crowdPenalty > 0) {
+    const statPenalty = Math.min(2, Math.floor((crowdPenalty + 1) / 2));
+    const hpPenalty = statPenalty * 2;
+    base.maxHp = Math.max(template.maxHp, base.maxHp - hpPenalty);
+    base.hp = Math.max(1, Math.min(base.maxHp, base.hp - hpPenalty));
+    base.str = Math.max(template.str, base.str - statPenalty);
+    base.mag = Math.max(template.mag, base.mag - statPenalty);
+    base.skl = Math.max(template.skl, base.skl - statPenalty);
+    base.spd = Math.max(template.spd, base.spd - statPenalty);
+    base.def = Math.max(template.def, base.def - statPenalty);
+    base.res = Math.max(template.res, base.res - statPenalty);
+  }
+
+  // Global enemy nerf to keep battles less punishing on compact maps.
+  base.maxHp = Math.max(1, base.maxHp - 3);
+  base.hp = Math.max(1, Math.min(base.maxHp, base.hp - 3));
+  base.str = Math.max(0, base.str - 1);
+  base.mag = Math.max(0, base.mag - 1);
+  base.skl = Math.max(0, base.skl - 1);
+  base.spd = Math.max(0, base.spd - 1);
+  base.def = Math.max(0, base.def - 1);
+  base.res = Math.max(0, base.res - 1);
+
   return base;
 }
 
@@ -582,73 +787,167 @@ function getWeaponsForClass(className: UnitClass): Weapon[] {
   }
 }
 
-function spawnUnits(state: GameState) {
+function buildFreshPlayerUnit(state: GameState, draft: CharacterDraft, index: number, occupiedSpawnTiles: Set<string>): Unit {
+  const desiredPosition = state.map.playerStarts[index] ?? { x: 0, y: 7 - index };
+  const position = findNearestOpenSpawn(state.map, desiredPosition, occupiedSpawnTiles);
+  return {
+    id: draft.id,
+    name: draft.name,
+    className: draft.className,
+    team: "player",
+    ownerId: draft.ownerId,
+    portraitUrl: getPortraitForUnit("player", draft.className, draft.portraitUrl),
+    position,
+    originalPosition: { ...position },
+    stats: clone(CLASS_TEMPLATES[draft.className]),
+    acted: false,
+    moved: false,
+    level: 1,
+    exp: 0,
+    alive: true,
+    inventory: {
+      weapons: getWeaponsForClass(draft.className),
+      items: [ITEMS[0]] // potion
+    },
+    equippedWeapon: getWeaponsForClass(draft.className)[0] || null // equip first weapon
+  };
+}
+
+function buildChapterCarryoverUnit(state: GameState, draft: CharacterDraft, index: number, occupiedSpawnTiles: Set<string>): Unit {
+  const previousUnit = state.units.find((unit) => unit.team === "player" && unit.id === draft.id);
+  if (!previousUnit) {
+    return buildFreshPlayerUnit(state, draft, index, occupiedSpawnTiles);
+  }
+
+  const desiredPosition = state.map.playerStarts[index] ?? { x: 0, y: 7 - index };
+  const position = findNearestOpenSpawn(state.map, desiredPosition, occupiedSpawnTiles);
+  const restoredStats = clone(previousUnit.stats);
+  return {
+    ...clone(previousUnit),
+    name: draft.name,
+    className: draft.className,
+    ownerId: draft.ownerId,
+    portraitUrl: getPortraitForUnit("player", draft.className, draft.portraitUrl),
+    position,
+    originalPosition: { ...position },
+    stats: {
+      ...restoredStats,
+      hp: restoredStats.maxHp
+    },
+    acted: false,
+    moved: false,
+    alive: true
+  };
+}
+
+function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boolean }) {
+  const occupiedSpawnTiles = new Set<string>();
+  const preservePlayerProgress = options?.preservePlayerProgress ?? false;
+
   const playerUnits: Unit[] = state.characterDrafts.map((draft, index) => {
-    const position = state.map.playerStarts[index] ?? { x: 0, y: 7 - index };
-    return {
-      id: draft.id,
-      name: draft.name,
-      className: draft.className,
-      team: "player",
-      ownerId: draft.ownerId,
-      portraitUrl: getPortraitForUnit("player", draft.className, draft.portraitUrl),
-      position,
-      originalPosition: { ...position },
-      stats: clone(CLASS_TEMPLATES[draft.className]),
-      acted: false,
-      moved: false,
-      level: 1,
-      exp: 0,
-      alive: true,
-      inventory: {
-        weapons: getWeaponsForClass(draft.className),
-        items: [ITEMS[0]] // potion
-      },
-      equippedWeapon: getWeaponsForClass(draft.className)[0] || null // equip first weapon
-    };
+    if (preservePlayerProgress) {
+      return buildChapterCarryoverUnit(state, draft, index, occupiedSpawnTiles);
+    }
+    return buildFreshPlayerUnit(state, draft, index, occupiedSpawnTiles);
   });
 
   let enemies: Array<{ name: string; className: UnitClass; position: Position }> = [];
   if (state.chapter === 1) {
     enemies = [
-      { name: "Bandit Axer", className: "Brigand", position: { x: 6, y: 1 } },
-      { name: "Outlaw Shot", className: "Archer", position: { x: 7, y: 2 } },
-      { name: "Fort Guard", className: "Knight", position: { x: 5, y: 5 } }
+      { name: "Bandit Axer", className: "Brigand", position: { x: 7, y: 3 } },
+      { name: "Outlaw Shot", className: "Archer", position: { x: 9, y: 2 } },
+      { name: "Fort Guard", className: "Knight", position: { x: 8, y: 6 } },
+      { name: "Camp Raider", className: "Brigand", position: { x: 8, y: 7 } },
+      { name: "Ridge Archer", className: "Archer", position: { x: 9, y: 8 } },
+      { name: "Road Mage", className: "Mage", position: { x: 9, y: 9 } },
+      { name: "Iron Wall", className: "Knight", position: { x: 7, y: 5 } }
     ];
   } else if (state.chapter === 2) {
     enemies = [
-      { name: "Veteran Brigand", className: "Brigand", position: { x: 6, y: 1 } },
-      { name: "Elite Archer", className: "Archer", position: { x: 7, y: 2 } },
-      { name: "Armored Knight", className: "Knight", position: { x: 5, y: 5 } },
-      { name: "Dark Mage", className: "Mage", position: { x: 4, y: 3 } }
+      { name: "Veteran Brigand", className: "Brigand", position: { x: 7, y: 4 } },
+      { name: "Elite Archer", className: "Archer", position: { x: 9, y: 2 } },
+      { name: "Armored Knight", className: "Knight", position: { x: 7, y: 7 } },
+      { name: "Dark Mage", className: "Mage", position: { x: 9, y: 8 } },
+      { name: "Pass Marauder", className: "Brigand", position: { x: 8, y: 5 } },
+      { name: "Highland Archer", className: "Archer", position: { x: 9, y: 9 } },
+      { name: "Citadel Guard", className: "Knight", position: { x: 8, y: 8 } },
+      { name: "Hex Adept", className: "Mage", position: { x: 7, y: 8 } },
+      { name: "Flank Reaver", className: "Brigand", position: { x: 6, y: 9 } }
+    ];
+  } else if (state.chapter === 3) {
+    enemies = [
+      { name: "Shade Archer", className: "Archer", position: { x: 8, y: 2 } },
+      { name: "Ruin Mage", className: "Mage", position: { x: 9, y: 2 } },
+      { name: "Ravine Knight", className: "Knight", position: { x: 8, y: 4 } },
+      { name: "Forest Brigand", className: "Brigand", position: { x: 7, y: 4 } },
+      { name: "Hunter Scout", className: "Archer", position: { x: 9, y: 5 } },
+      { name: "Ward Knight", className: "Knight", position: { x: 7, y: 6 } },
+      { name: "Witchfire", className: "Mage", position: { x: 8, y: 7 } },
+      { name: "Path Reaver", className: "Brigand", position: { x: 9, y: 8 } },
+      { name: "Trail Archer", className: "Archer", position: { x: 7, y: 8 } },
+      { name: "Night Raider", className: "Brigand", position: { x: 8, y: 9 } }
+    ];
+  } else if (state.chapter === 4) {
+    enemies = [
+      { name: "Citadel Bow", className: "Archer", position: { x: 8, y: 1 } },
+      { name: "Blackwall Knight", className: "Knight", position: { x: 7, y: 2 } },
+      { name: "Siege Mage", className: "Mage", position: { x: 9, y: 2 } },
+      { name: "Gate Brigand", className: "Brigand", position: { x: 8, y: 3 } },
+      { name: "Bastion Guard", className: "Knight", position: { x: 6, y: 4 } },
+      { name: "Ridge Archer", className: "Archer", position: { x: 9, y: 4 } },
+      { name: "Ash Adept", className: "Mage", position: { x: 7, y: 5 } },
+      { name: "Fort Reaver", className: "Brigand", position: { x: 8, y: 6 } },
+      { name: "Wall Knight", className: "Knight", position: { x: 6, y: 7 } },
+      { name: "Crossbowman", className: "Archer", position: { x: 9, y: 7 } },
+      { name: "Hex Marshal", className: "Mage", position: { x: 8, y: 8 } },
+      { name: "Vanguard Reaver", className: "Brigand", position: { x: 7, y: 9 } }
+    ];
+  } else if (state.chapter === 5) {
+    enemies = [
+      { name: "Final Bow", className: "Archer", position: { x: 8, y: 1 } },
+      { name: "Dread Knight", className: "Knight", position: { x: 7, y: 1 } },
+      { name: "Grand Mage", className: "Mage", position: { x: 9, y: 1 } },
+      { name: "Outer Reaver", className: "Brigand", position: { x: 8, y: 2 } },
+      { name: "Iron Bastion", className: "Knight", position: { x: 6, y: 3 } },
+      { name: "Storm Archer", className: "Archer", position: { x: 9, y: 3 } },
+      { name: "Flame Adept", className: "Mage", position: { x: 7, y: 4 } },
+      { name: "Gatebreaker", className: "Brigand", position: { x: 8, y: 5 } },
+      { name: "Bulwark Knight", className: "Knight", position: { x: 6, y: 6 } },
+      { name: "Skirmish Archer", className: "Archer", position: { x: 9, y: 6 } },
+      { name: "Dusk Magus", className: "Mage", position: { x: 8, y: 7 } },
+      { name: "Ruin Reaver", className: "Brigand", position: { x: 7, y: 8 } },
+      { name: "Last Wall", className: "Knight", position: { x: 8, y: 9 } }
     ];
   }
 
-  const enemyUnits: Unit[] = enemies.map((enemy) => ({
-    id: cryptoRandomId(),
-    name: enemy.name,
-    className: enemy.className,
-    team: "enemy",
-    portraitUrl: getPortraitForUnit("enemy", enemy.className),
-    position: enemy.position,
-    originalPosition: { ...enemy.position },
-    stats: seededEnemyStats(enemy.className, state.chapter),
-    acted: false,
-    moved: false,
-    level: state.chapter,
-    exp: 0,
-    alive: true,
-    inventory: {
-      weapons: getWeaponsForClass(enemy.className),
-      items: []
-    },
-    equippedWeapon: getWeaponsForClass(enemy.className)[0] || null // equip first weapon
-  }));
+  const enemyUnits: Unit[] = enemies.map((enemy) => {
+    const position = findNearestOpenSpawn(state.map, enemy.position, occupiedSpawnTiles);
+    return {
+      id: cryptoRandomId(),
+      name: enemy.name,
+      className: enemy.className,
+      team: "enemy",
+      portraitUrl: getPortraitForUnit("enemy", enemy.className),
+      position,
+      originalPosition: { ...position },
+      stats: seededEnemyStats(enemy.className, state.chapter, enemies.length),
+      acted: false,
+      moved: false,
+      level: state.chapter,
+      exp: 0,
+      alive: true,
+      inventory: {
+        weapons: getWeaponsForClass(enemy.className),
+        items: []
+      },
+      equippedWeapon: getWeaponsForClass(enemy.className)[0] || null // equip first weapon
+    };
+  });
 
   state.units = [...playerUnits, ...enemyUnits];
 }
 
-function resetBattleState(state: GameState) {
+function resetBattleState(state: GameState, options?: { preservePlayerProgress?: boolean }) {
   state.status = "battle";
   state.phase = "player";
   state.turnCount = 1;
@@ -660,7 +959,7 @@ function resetBattleState(state: GameState) {
   state.latestCombatEvent = null;
   state.latestLevelUpEvent = null;
   state.map = createMap(state.chapter);
-  spawnUnits(state);
+  spawnUnits(state, options);
 }
 
 function rollLevelUpStatGains(unit: Unit) {
@@ -717,6 +1016,16 @@ function grantExp(state: GameState, unit: Unit, amount: number) {
 function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   const defenderTerrainDefense = getTerrainDefense(state.map, defender.position);
   const attackerTerrainDefense = getTerrainDefense(state.map, attacker.position);
+  let playerCombatExpAward = 0;
+  let playerCombatExpRecipient: Unit | null = null;
+
+  if (attacker.team === "player") {
+    playerCombatExpRecipient = attacker;
+    playerCombatExpAward += PLAYER_INITIATE_COMBAT_EXP;
+  } else if (attacker.team === "enemy" && defender.team === "player") {
+    playerCombatExpRecipient = defender;
+    playerCombatExpAward += PLAYER_DEFEND_COMBAT_EXP;
+  }
 
   // Determine number of attacks
   let attackerAttacks = 1;
@@ -749,7 +1058,7 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     defender.alive = false;
     pushLog(state, `${defender.name} was defeated.`);
     if (attacker.team === "player") {
-      grantExp(state, attacker, 50);
+      playerCombatExpAward += 50;
     }
   } else {
     // Defender's counterattacks
@@ -778,6 +1087,10 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     }
   }
 
+  if (playerCombatExpRecipient) {
+    grantExp(state, playerCombatExpRecipient, playerCombatExpAward);
+  }
+
   attacker.acted = true;
   state.selectedUnitId = null;
   state.highlights = [];
@@ -801,12 +1114,12 @@ function checkWinState(state: GameState) {
   const livingEnemies = state.units.filter((unit) => unit.team === "enemy" && unit.alive);
 
   if (livingEnemies.length === 0) {
-    if (state.chapter === 1) {
-      // Keep battle map visible and let the DM advance after the victory moment.
+    if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
+      // Keep battle map visible and let the DM move the party into Base Camp.
       state.phase = "victory";
       state.status = "battle";
       state.winner = "player";
-      pushLog(state, "Chapter 1 cleared! Awaiting the DM to advance to Base Camp.");
+      pushLog(state, `Chapter ${state.chapter} cleared! Awaiting the DM to advance to Base Camp.`);
     } else {
       // Final victory
       state.phase = "victory";
@@ -1053,6 +1366,15 @@ io.on("connection", (socket) => {
     if (!unit || unit.acted || !canControlUnit(room.state, playerId, unit)) {
       return;
     }
+
+    if (room.state.selectedUnitId === unit.id) {
+      room.state.selectedUnitId = null;
+      room.state.highlights = [];
+      room.state.activePlayerId = playerId;
+      await emitState(room);
+      return;
+    }
+
     room.state.selectedUnitId = unit.id;
     room.state.highlights = unit.moved ? [] : movementRange(room.state, unit);
     room.state.activePlayerId = playerId;
@@ -1069,7 +1391,7 @@ io.on("connection", (socket) => {
       return;
     }
     const legal = movementRange(room.state, unit).some((tile) => tile.x === position.x && tile.y === position.y);
-    if (!legal || unitAt(room.state, position)) {
+    if (!legal || !isPassableTile(room.state.map, position) || unitAt(room.state, position)) {
       io.to(socket.id).emit("errorMessage", "That move is not valid.");
       return;
     }
@@ -1153,7 +1475,11 @@ io.on("connection", (socket) => {
     if (!room || room.state.hostId !== playerId) {
       return;
     }
-    if (room.state.chapter !== 1 || room.state.phase !== "victory" || room.state.winner !== "player") {
+    if (
+      room.state.chapter >= CAMPAIGN_FINAL_CHAPTER ||
+      room.state.phase !== "victory" ||
+      room.state.winner !== "player"
+    ) {
       io.to(socket.id).emit("errorMessage", "Base Camp can only be opened after a chapter victory.");
       return;
     }
@@ -1322,8 +1648,12 @@ io.on("connection", (socket) => {
     if (!room || room.state.phase !== "basecamp" || room.state.hostId !== playerId) {
       return;
     }
+    if (room.state.chapter >= CAMPAIGN_FINAL_CHAPTER) {
+      io.to(socket.id).emit("errorMessage", "The campaign is already at the final chapter.");
+      return;
+    }
     room.state.chapter += 1;
-    resetBattleState(room.state);
+    resetBattleState(room.state, { preservePlayerProgress: true });
     pushLog(room.state, `The DM advanced to Chapter ${room.state.chapter}.`);
     await emitState(room);
   });

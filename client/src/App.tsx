@@ -39,6 +39,15 @@ const SHOP_TAB_STORAGE_KEY = "feo:basecamp:shop-tab";
 const SHOP_AFFORDABLE_STORAGE_KEY = "feo:basecamp:affordable-only";
 const SHOP_COMPAT_CLASS_STORAGE_KEY = "feo:basecamp:compat-class";
 const BATTLE_TAB_STORAGE_KEY = "feo:battle:mobile-tab";
+const CAMPAIGN_FINAL_CHAPTER = 5;
+
+const CHAPTER_TITLES: Record<number, string> = {
+  1: "Border Skirmish",
+  2: "Mountain Pass",
+  3: "Shadowed Grove",
+  4: "Iron Bastion",
+  5: "Last Redoubt"
+};
 
 const CLASS_WEAPON_TYPES: Record<Unit["className"], string[]> = {
   Lord: ["Sword"],
@@ -58,17 +67,31 @@ function formatTabCount(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-function AppShell({ children }: { children: ReactNode }) {
+function getChapterTitle(chapter: number): string {
+  return CHAPTER_TITLES[chapter] ?? `Chapter ${chapter}`;
+}
+
+function AppShell({
+  children,
+  showHero = true,
+  shellClassName
+}: {
+  children: ReactNode;
+  showHero?: boolean;
+  shellClassName?: string;
+}) {
   return (
-    <div className="app-shell">
-      <div className="hero">
-        <p className="eyebrow">Co-op Tactical RPG Prototype</p>
-        <h1>Fire Emblem Online</h1>
-        <p className="hero-copy">
-          Sign in, keep a persistent commander profile, save favorite units, and run synchronized tactical battles with
-          your party in real time.
-        </p>
-      </div>
+    <div className={`app-shell${shellClassName ? ` ${shellClassName}` : ""}`}>
+      {showHero ? (
+        <div className="hero">
+          <p className="eyebrow">Co-op Tactical RPG Prototype</p>
+          <h1>Fire Emblem Online</h1>
+          <p className="hero-copy">
+            Sign in, keep a persistent commander profile, save favorite units, and run synchronized tactical battles with
+            your party in real time.
+          </p>
+        </div>
+      ) : null}
       {children}
     </div>
   );
@@ -88,6 +111,17 @@ function StatusStrip({
         </div>
       ))}
     </section>
+  );
+}
+
+function GameTopBanner({ label }: { label: string }) {
+  return (
+    <header className="game-top-banner" aria-label="Current game view">
+      <h1>
+        Fire Emblem
+        <span>{label}</span>
+      </h1>
+    </header>
   );
 }
 
@@ -165,33 +199,44 @@ function LandingScreen() {
   const deleteProfileCharacter = useAppStore((store) => store.deleteProfileCharacter);
   const error = useAppStore((store) => store.error);
   const clearError = useAppStore((store) => store.clearError);
+  const commanderPortrait = profileCharacters[0]?.portraitUrl ?? getDefaultPortrait("player", "Lord");
 
   return (
-    <AppShell>
-      <div className="layout home-layout">
-        <div className="panel auth-panel">
-          <div className="status-row">
-            <span className={connected ? "pill online" : "pill offline"}>{connected ? "Socket Live" : "Connecting"}</span>
-            <button className="secondary" onClick={() => void logout()}>
-              Sign Out
-            </button>
+    <AppShell showHero={false} shellClassName="home-shell">
+      <header className="home-top-banner" aria-label="Profile overview">
+        <h1>
+          Fire Emblem
+          <span>Online</span>
+        </h1>
+      </header>
+      <div className="home-dashboard">
+        <aside className="home-sidebar">
+          <div className="home-avatar-wrap">
+            <img className="home-avatar" src={commanderPortrait} alt={`${authUser.displayName} profile portrait`} />
           </div>
-          <div className="profile-summary">
-            <strong>{authUser.displayName}</strong>
+          <div className="home-profile-meta">
+            <h2>{authUser.displayName}</h2>
             <span>{authUser.email}</span>
             <span>
-              Record {authUser.wins}W / {authUser.losses}L
+              Record: {authUser.wins}W / {authUser.losses}L
             </span>
           </div>
-          <div className="actions">
-            <button onClick={() => void createRoom()}>Create Room</button>
-          </div>
-          <div className="join-block">
-            <label className="field">
-              <span>Join Code</span>
-              <input value={roomCode} maxLength={6} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} />
-            </label>
-            <button className="secondary" onClick={() => void joinRoom(roomCode)} disabled={roomCode.length < 6}>
+          <span className={connected ? "pill online" : "pill offline"}>{connected ? "Socket Live" : "Connecting"}</span>
+          <div className="home-sidebar-actions">
+            <button className="home-btn home-btn-quiet" onClick={() => void logout()}>
+              Sign Out
+            </button>
+            <button className="home-btn" onClick={() => void createRoom()}>
+              Create Room
+            </button>
+            <input
+              className="home-code-input"
+              value={roomCode}
+              maxLength={6}
+              placeholder="Join Code"
+              onChange={(event) => setRoomCode(event.target.value.toUpperCase())}
+            />
+            <button className="home-btn home-btn-quiet" onClick={() => void joinRoom(roomCode)} disabled={roomCode.length < 6}>
               Join Room
             </button>
           </div>
@@ -200,55 +245,61 @@ function LandingScreen() {
               {error}
             </div>
           ) : null}
-        </div>
-        <section className="panel">
+        </aside>
+        <section className="home-games-panel" aria-label="Active games">
           <h3>Active Games</h3>
-          <div className="roster">
+          <div className="home-games-grid">
             {activeGames.length > 0 ? (
               activeGames.map((game) => (
-                <div key={`${game.roomCode}-${game.playerId}`} className="roster-card">
-                  <div className="roster-title">
-                    <strong>Room {game.roomCode}</strong>
-                    <span>{game.status === "lobby" ? "Lobby" : game.phase}</span>
+                <article key={`${game.roomCode}-${game.playerId}`} className="home-game-card">
+                  <div className="home-game-code">
+                    <span>{game.phase === "player" ? "PLAYER" : game.phase.toUpperCase()}</span>
+                    <strong>{game.roomCode}</strong>
                   </div>
-                  <span>
-                    {game.playerCount} players • Turn {game.turnCount}
-                  </span>
-                  <span>{game.objective}</span>
-                  <div className="button-group">
-                    <button onClick={() => void returnToGame(game)}>Return To Game</button>
+                  <h4>{authUser.displayName} Squad</h4>
+                  <p>{game.objective}</p>
+                  <div className="home-game-meta">
+                    <span>Turn {game.turnCount}</span>
+                    <span>{game.playerCount} Players</span>
+                  </div>
+                  <div className="home-game-actions">
+                    <button className="home-btn" onClick={() => void returnToGame(game)}>
+                      Return to Game
+                    </button>
                     {!game.isHost ? (
-                      <button className="secondary" onClick={() => void removeActiveGame(game.roomCode)}>
+                      <button className="home-btn home-btn-quiet" onClick={() => void removeActiveGame(game.roomCode)}>
                         Remove
                       </button>
                     ) : null}
                   </div>
-                </div>
+                </article>
               ))
             ) : (
               <p className="muted">Any room you join will appear here so you can jump back into it later.</p>
             )}
           </div>
         </section>
-        <section className="panel">
-          <h3>Saved Profile Units</h3>
-          <div className="roster">
+        <section className="home-units-panel" aria-label="Saved profile units">
+          <div className="home-units-header">
+            <h3>Saved Profile Units</h3>
+          </div>
+          <div className="home-units-list">
             {profileCharacters.length > 0 ? (
               profileCharacters.map((character) => (
-                <div key={character.id} className="roster-card">
+                <article key={character.id} className="home-unit-card">
                   <img
                     className="portrait-preview"
                     src={character.portraitUrl ?? getDefaultPortrait("player", character.className)}
                     alt={`${character.name} portrait`}
                   />
-                  <div className="roster-title">
+                  <div className="home-unit-meta">
                     <strong>{character.name}</strong>
                     <span>{character.className}</span>
                   </div>
-                  <button className="secondary" onClick={() => void deleteProfileCharacter(character.id)}>
+                  <button className="home-btn home-btn-quiet" onClick={() => void deleteProfileCharacter(character.id)}>
                     Remove
                   </button>
-                </div>
+                </article>
               ))
             ) : (
               <p className="muted">Saved profile units appear here and can be recruited from the lobby.</p>
@@ -304,7 +355,8 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   }
 
   return (
-    <AppShell>
+    <AppShell showHero={false} shellClassName="game-shell">
+      <GameTopBanner label="War Room" />
       <StatusStrip items={statusItems} />
       <div className="room-header panel">
         <div>
@@ -472,6 +524,55 @@ function AttackAnimation() {
   );
 }
 
+function PhaseAnnouncementOverlay() {
+  const phaseAnnouncement = useAppStore((store) => store.phaseAnnouncement);
+  const clearPhaseAnnouncement = useAppStore((store) => store.clearPhaseAnnouncement);
+
+  const phaseLabel =
+    phaseAnnouncement === "player"
+      ? "Player Phase"
+      : phaseAnnouncement === "enemy"
+        ? "Enemy Phase"
+        : phaseAnnouncement === "victory"
+          ? "Victory"
+          : "Defeat";
+
+  useEffect(() => {
+    if (!phaseAnnouncement) return;
+    const timer = window.setTimeout(() => {
+      clearPhaseAnnouncement();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [phaseAnnouncement, clearPhaseAnnouncement]);
+
+  return (
+    <AnimatePresence>
+      {phaseAnnouncement ? (
+        <motion.div
+          key={phaseAnnouncement}
+          className={`phase-announcement-overlay phase-announcement-overlay--${phaseAnnouncement}`}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          <motion.div
+            className="phase-announcement-banner"
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            exit={{ scaleX: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+          >
+            <span className="phase-announcement-label">
+              {phaseLabel}
+            </span>
+          </motion.div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
+  );
+}
+
 function LevelUpOverlay() {
   const levelUpEvent = useAppStore((store) => store.levelUpEvent);
   const clearLevelUpEvent = useAppStore((store) => store.clearLevelUpEvent);
@@ -541,8 +642,9 @@ function BattleOutcomeOverlay({
   onAdvanceToBaseCamp: () => void;
   onExitGame: () => void;
 }) {
-  const canAdvanceToBaseCamp = show && winner === "player" && chapter === 1;
-  const canExitAfterFinalVictory = show && winner === "player" && chapter > 1;
+  const canAdvanceToBaseCamp = show && winner === "player" && chapter < CAMPAIGN_FINAL_CHAPTER;
+  const canExitToMainScreen =
+    show && (winner === "enemy" || (winner === "player" && chapter >= CAMPAIGN_FINAL_CHAPTER));
 
   return (
     <AnimatePresence>
@@ -571,9 +673,9 @@ function BattleOutcomeOverlay({
                 <p className="muted">Waiting for the DM to advance to Base Camp.</p>
               )
             ) : null}
-            {canExitAfterFinalVictory ? (
+            {canExitToMainScreen ? (
               <button className="battle-outcome-action" onClick={onExitGame}>
-                Exit Chapter View
+                Return To Main Screen
               </button>
             ) : null}
           </motion.div>
@@ -716,7 +818,8 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
   }, [compatibleClass]);
 
   return (
-    <AppShell>
+    <AppShell showHero={false} shellClassName="game-shell">
+      <GameTopBanner label="Base Camp" />
       <StatusStrip items={statusItems} />
       <div className="room-header panel">
         <div>
@@ -727,10 +830,18 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
         <div className="room-meta">
           <span>Room {state.roomCode}</span>
           <span>Base Camp</span>
+          {isHost ? (
+            <button onClick={advanceToChapter}>
+              Advance to Chapter {state.chapter + 1}
+            </button>
+          ) : null}
           <button className="secondary" onClick={() => void exitCurrentGame()}>
             Exit Chapter View
           </button>
         </div>
+      </div>
+      <div className="layout basecamp-log-layout">
+        <BattleLog logs={state.logs} />
       </div>
       <div className="layout basecamp-layout">
         <section className="panel">
@@ -852,15 +963,6 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
             </div>
           ) : null}
         </section>
-        {isHost && (
-          <section className="panel">
-            <h3>DM Controls</h3>
-            <button onClick={advanceToChapter}>
-              Advance to Chapter {state.chapter + 1}
-            </button>
-          </section>
-        )}
-        <BattleLog logs={state.logs} />
       </div>
     </AppShell>
   );
@@ -869,6 +971,8 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
 function BattleScreen({ state }: { state: GameSnapshot }) {
   const playerId = useAppStore((store) => store.playerId);
   const combatAnimation = useAppStore((store) => store.combatAnimation);
+  const levelUpEvent = useAppStore((store) => store.levelUpEvent);
+  const phaseAnnouncement = useAppStore((store) => store.phaseAnnouncement);
   const connected = useAppStore((store) => store.connected);
   const selectUnit = useAppStore((store) => store.selectUnit);
   const moveUnit = useAppStore((store) => store.moveUnit);
@@ -899,7 +1003,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const canRestart = state.status === "complete" && state.winner === "enemy" && isHost;
   const canEndGame = state.status !== "complete" && isHost;
   const hasBattleOutcome = state.phase === "victory" || state.phase === "defeat" || state.status === "complete";
-  const showOutcomeOverlay = hasBattleOutcome && !combatAnimation;
+  const showOutcomeOverlay = hasBattleOutcome && !combatAnimation && !levelUpEvent && !phaseAnnouncement;
   const selectedHint = selectedUnit
     ? `${selectedUnit.name} ${selectedUnit.acted ? "ready" : "active"}`
     : "No unit selected";
@@ -1038,8 +1142,10 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   }, [state, hoveredUnit]);
 
   return (
-    <AppShell>
+    <AppShell showHero={false} shellClassName="game-shell">
+      <GameTopBanner label="Battle" />
       <AttackAnimation />
+      <PhaseAnnouncementOverlay />
       <LevelUpOverlay />
       <BattleOutcomeOverlay
         winner={state.winner}
@@ -1053,7 +1159,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Battlefield</p>
-          <h2>Chapter {state.chapter}: {state.chapter === 1 ? "Border Skirmish" : "Mountain Pass"}</h2>
+          <h2>Chapter {state.chapter}: {getChapterTitle(state.chapter)}</h2>
           <p className="phase-label">{state.phase === "player" ? `Player Phase - Turn ${state.turnCount}` : state.phase.toUpperCase()}</p>
         </div>
         <div className="room-meta">
@@ -1101,7 +1207,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                   return displayPos.x === x && displayPos.y === y;
                 });
                 const isHighlighted = highlights.has(tileKey({ x, y }));
-                const isSelected = occupant?.id === selectedUnit?.id;
+                const isSelected = Boolean(selectedUnit && occupant && occupant.id === selectedUnit.id);
                 const isAttackTarget = selectedUnit ? unitCanAttack(selectedUnit, occupant) : false;
                 const isHealTarget = selectedUnit ? unitCanHeal(selectedUnit, occupant) : false;
                 const isEnemyMovementTile = hoveredEnemyMovementTiles.has(tileKey({ x, y }));
@@ -1137,13 +1243,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                         initial={{ scale: 0.8, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
                       >
-                        <div className="unit-chip-main">
-                          <img src={getClassImage(occupant.className)} alt={occupant.className} className="unit-chip-image" />
-                          <div className="unit-chip-info">
-                            <span>{occupant.name.slice(0, 2).toUpperCase()}</span>
-                            <small>{occupant.stats.hp}</small>
-                          </div>
-                        </div>
+                        <img src={getClassImage(occupant.className)} alt={occupant.className} className="unit-chip-image" />
                         <div className="health-bar">
                           <div className="health-bar-fill" style={{ width: `${healthPercent(occupant)}%` }} />
                         </div>
@@ -1164,6 +1264,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                 <div className="actions-unit-meta">
                   <strong>{selectedUnit.name}</strong>
                   <span>{selectedUnit.className}</span>
+                  <span>Lv {selectedUnit.level} · EXP {selectedUnit.exp}/100</span>
                   <span>HP {selectedUnit.stats.hp}/{selectedUnit.stats.maxHp}</span>
                   <div className="health-bar detail-health-bar">
                     <div className="health-bar-fill" style={{ width: `${healthPercent(selectedUnit)}%` }} />
