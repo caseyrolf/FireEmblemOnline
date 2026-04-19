@@ -178,6 +178,7 @@ export type GameState = {
   winner: UnitTeam | null;
   outcomeRecorded: boolean;
   chapter: number;
+  mapStartPlayerUnits: Unit[];
   latestCombatEvent: { attackerId: string; type: 'attack' | 'heal' } | null;
   latestLevelUpEvent: LevelUpEvent | null;
   latestPromotionEvent: PromotionEvent | null;

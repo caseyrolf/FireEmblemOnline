@@ -591,6 +591,7 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     winner: null,
     outcomeRecorded: false,
     chapter: 1,
+    mapStartPlayerUnits: [],
     latestCombatEvent: null,
     latestLevelUpEvent: null,
     latestPromotionEvent: null
@@ -655,6 +656,12 @@ async function getOrLoadRoom(roomCode: string) {
   // Add chapter if missing
   if (!persistedState.chapter) {
     persistedState.chapter = 1;
+  }
+  // Add map-start snapshot if missing (best effort for older saves).
+  if (!("mapStartPlayerUnits" in persistedState) || !Array.isArray((persistedState as any).mapStartPlayerUnits)) {
+    (persistedState as any).mapStartPlayerUnits = persistedState.units
+      .filter((unit) => unit.team === "player")
+      .map((unit) => clone(unit));
   }
   // Add latestCombatEvent if missing
   if (!('latestCombatEvent' in persistedState)) {
@@ -1075,11 +1082,49 @@ function buildChapterCarryoverUnit(state: GameState, draft: CharacterDraft, inde
   };
 }
 
-function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boolean }) {
+function buildMapStartSnapshotUnit(state: GameState, draft: CharacterDraft, index: number, occupiedSpawnTiles: Set<string>): Unit {
+  const snapshotUnit = state.mapStartPlayerUnits.find((unit) => unit.id === draft.id);
+  if (!snapshotUnit) {
+    return buildFreshPlayerUnit(state, draft, index, occupiedSpawnTiles);
+  }
+
+  const desiredPosition = state.map.playerStarts[index] ?? { x: 0, y: 7 - index };
+  const position = findNearestOpenSpawn(state.map, desiredPosition, occupiedSpawnTiles);
+  const restoredStats = clone(snapshotUnit.stats);
+  return {
+    ...clone(snapshotUnit),
+    name: draft.name,
+    className: draft.className,
+    ownerId: draft.ownerId,
+    portraitUrl: getPortraitForUnit("player", draft.className, draft.portraitUrl),
+    position,
+    originalPosition: { ...position },
+    stats: {
+      ...restoredStats,
+      hp: restoredStats.maxHp
+    },
+    acted: false,
+    moved: false,
+    alive: true,
+    skillId: draft.skillId ?? snapshotUnit.skillId ?? null
+  };
+}
+
+function captureMapStartPlayerUnits(state: GameState) {
+  state.mapStartPlayerUnits = state.units
+    .filter((unit) => unit.team === "player")
+    .map((unit) => clone(unit));
+}
+
+function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boolean; restoreFromMapStartSnapshot?: boolean }) {
   const occupiedSpawnTiles = new Set<string>();
   const preservePlayerProgress = options?.preservePlayerProgress ?? false;
+  const restoreFromMapStartSnapshot = options?.restoreFromMapStartSnapshot ?? false;
 
   const playerUnits: Unit[] = state.characterDrafts.map((draft, index) => {
+    if (restoreFromMapStartSnapshot) {
+      return buildMapStartSnapshotUnit(state, draft, index, occupiedSpawnTiles);
+    }
     if (preservePlayerProgress) {
       return buildChapterCarryoverUnit(state, draft, index, occupiedSpawnTiles);
     }
@@ -1202,7 +1247,11 @@ function resetBattleState(state: GameState, options?: { preservePlayerProgress?:
   state.latestLevelUpEvent = null;
   state.latestPromotionEvent = null;
   state.map = createMap(state.chapter);
-  spawnUnits(state, options);
+  const restoreFromMapStartSnapshot = options?.preservePlayerProgress === undefined && state.mapStartPlayerUnits.length > 0;
+  spawnUnits(state, {
+    preservePlayerProgress: options?.preservePlayerProgress,
+    restoreFromMapStartSnapshot
+  });
 }
 
 function rollLevelUpStatGains(unit: Unit) {
@@ -1618,49 +1667,55 @@ async function takeEnemyPhase(room: Room) {
   pushLog(state, "Enemy phase begins.");
   await emitState(room);
 
-  for (const enemy of state.units.filter((unit) => unit.team === "enemy" && unit.alive)) {
-    if (!enemy.alive) continue;
-    const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
-    if (livingPlayers.length === 0) {
-      break;
-    }
-    const target = [...livingPlayers].sort((a, b) => distance(enemy.position, a.position) - distance(enemy.position, b.position))[0];
-    if (!canUnitAttackAtDistance(enemy, distance(enemy.position, target.position))) {
-      const options = movementRange(state, enemy)
-        .filter((option) => !unitAt(state, option))
-        .sort((a, b) => {
-          const distanceA = distance(a, target.position);
-          const distanceB = distance(b, target.position);
-          const aCanAttack = canUnitAttackAtDistance(enemy, distanceA) ? 0 : 1;
-          const bCanAttack = canUnitAttackAtDistance(enemy, distanceB) ? 0 : 1;
-          if (aCanAttack !== bCanAttack) {
-            return aCanAttack - bCanAttack;
-          }
-          return distanceA - distanceB;
-        });
-      if (options[0]) {
-        enemy.position = options[0];
-        enemy.moved = true;
-        state.latestCombatEvent = null;
+  try {
+    for (const enemy of state.units.filter((unit) => unit.team === "enemy" && unit.alive)) {
+      if (!enemy.alive) continue;
+      const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
+      if (livingPlayers.length === 0) {
+        break;
+      }
+      const target = [...livingPlayers].sort((a, b) => distance(enemy.position, a.position) - distance(enemy.position, b.position))[0];
+      if (!canUnitAttackAtDistance(enemy, distance(enemy.position, target.position))) {
+        const options = movementRange(state, enemy)
+          .filter((option) => !unitAt(state, option))
+          .sort((a, b) => {
+            const distanceA = distance(a, target.position);
+            const distanceB = distance(b, target.position);
+            const aCanAttack = canUnitAttackAtDistance(enemy, distanceA) ? 0 : 1;
+            const bCanAttack = canUnitAttackAtDistance(enemy, distanceB) ? 0 : 1;
+            if (aCanAttack !== bCanAttack) {
+              return aCanAttack - bCanAttack;
+            }
+            return distanceA - distanceB;
+          });
+        if (options[0]) {
+          enemy.position = options[0];
+          enemy.moved = true;
+          state.latestCombatEvent = null;
+          await emitState(room);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+      const victim = attackableTargets(state, enemy).sort((a, b) => a.stats.hp - b.stats.hp)[0];
+      if (victim) {
+        resolveAttack(state, enemy, victim);
+        enemy.acted = true;
+        state.latestCombatEvent = { attackerId: enemy.id, type: 'attack' };
         await emitState(room);
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        state.latestCombatEvent = null;
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      } else {
+        enemy.acted = true;
       }
     }
-    const victim = attackableTargets(state, enemy).sort((a, b) => a.stats.hp - b.stats.hp)[0];
-    if (victim) {
-      resolveAttack(state, enemy, victim);
-      enemy.acted = true;
-      state.latestCombatEvent = { attackerId: enemy.id, type: 'attack' };
-      await emitState(room);
-      state.latestCombatEvent = null;
-      await new Promise(resolve => setTimeout(resolve, 2500));
-    } else {
-      enemy.acted = true;
-    }
+  } catch (err) {
+    console.error("[takeEnemyPhase] Error during enemy loop:", err);
   }
 
   checkWinState(state);
   state.latestCombatEvent = null;
+  state.latestLevelUpEvent = null;
+  state.latestPromotionEvent = null;
   if (state.status !== "complete" && state.phase === "enemy") {
     state.phase = "player";
     state.turnCount += 1;
@@ -1688,7 +1743,12 @@ async function takeEnemyPhase(room: Room) {
     }
     pushLog(state, `Turn ${state.turnCount} begins.`);
   }
-  await emitState(room);
+  try {
+    await emitState(room);
+  } catch (err) {
+    console.error("[takeEnemyPhase] Failed to emit final state, broadcasting directly:", err);
+    io.to(state.roomCode).emit("stateUpdated", clone(state));
+  }
 }
 
 async function ensureRoom(socketId: string, roomCode: string) {
@@ -1850,6 +1910,7 @@ io.on("connection", (socket) => {
       return;
     }
     resetBattleState(room.state);
+    captureMapStartPlayerUnits(room.state);
     pushLog(room.state, "Battle started.");
     await emitState(room);
   });
@@ -2208,6 +2269,7 @@ io.on("connection", (socket) => {
     }
     room.state.chapter += 1;
     resetBattleState(room.state, { preservePlayerProgress: true });
+    captureMapStartPlayerUnits(room.state);
     pushLog(room.state, `The DM advanced to Chapter ${room.state.chapter}.`);
     await emitState(room);
   });
