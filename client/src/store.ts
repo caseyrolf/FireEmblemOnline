@@ -10,6 +10,7 @@ import type {
   PromotionEvent,
   ProfileCharacterRecord,
   ServerToClientEvents,
+  SkillId,
   TurnPhase,
   UnitClass
 } from "../../shared/game";
@@ -80,7 +81,7 @@ type AppStore = {
   clearPhaseAnnouncement: () => void;
   refreshProfileCharacters: () => Promise<void>;
   refreshActiveGames: () => Promise<void>;
-  saveProfileCharacter: (name: string, className: UnitClass, portraitUrl?: string) => Promise<boolean>;
+  saveProfileCharacter: (name: string, className: UnitClass, portraitUrl?: string, skillId?: SkillId) => Promise<boolean>;
   deleteProfileCharacter: (id: string) => Promise<void>;
   clearError: () => void;
 };
@@ -117,6 +118,22 @@ function getPhaseAnnouncement(resolvedPhase: TurnPhase | null, nextPhase: TurnPh
   return nextPhase as PhaseAnnouncement;
 }
 
+function getLevelUpEventKey(levelUpEvent: LevelUpEvent | null) {
+  if (!levelUpEvent) {
+    return null;
+  }
+
+  return `${levelUpEvent.unitId}-${levelUpEvent.newLevel}`;
+}
+
+function getPromotionEventKey(promotionEvent: PromotionEvent | null) {
+  if (!promotionEvent) {
+    return null;
+  }
+
+  return `${promotionEvent.unitId}-${promotionEvent.newClassName}-${promotionEvent.newLevel}`;
+}
+
 function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () => AppStore, nextState: GameState) {
   const combatAnimation = buildCombatAnimation(nextState);
   if (combatAnimation) {
@@ -130,30 +147,30 @@ function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () =
     return true;
   }
 
-  if (nextState.latestLevelUpEvent) {
-    const key = `${nextState.latestLevelUpEvent.unitId}-${nextState.latestLevelUpEvent.newLevel}`;
-    if (get().shownLevelUpKey !== key) {
+  const levelUpKey = getLevelUpEventKey(nextState.latestLevelUpEvent);
+  if (nextState.latestLevelUpEvent && levelUpKey) {
+    if (get().shownLevelUpKey !== levelUpKey) {
       set({
         state: nextState,
         combatAnimation: null,
         levelUpEvent: nextState.latestLevelUpEvent,
         promotionEvent: null,
-        shownLevelUpKey: key,
+        shownLevelUpKey: levelUpKey,
         phaseAnnouncement: null
       });
       return true;
     }
   }
 
-  if (nextState.latestPromotionEvent) {
-    const key = `${nextState.latestPromotionEvent.unitId}-${nextState.latestPromotionEvent.newClassName}-${nextState.latestPromotionEvent.newLevel}`;
-    if (get().shownPromotionKey !== key) {
+  const promotionKey = getPromotionEventKey(nextState.latestPromotionEvent);
+  if (nextState.latestPromotionEvent && promotionKey) {
+    if (get().shownPromotionKey !== promotionKey) {
       set({
         state: nextState,
         combatAnimation: null,
         levelUpEvent: null,
         promotionEvent: nextState.latestPromotionEvent,
-        shownPromotionKey: key,
+        shownPromotionKey: promotionKey,
         phaseAnnouncement: null
       });
       return true;
@@ -690,7 +707,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ error: error instanceof Error ? error.message : "Could not load active games." });
     }
   },
-  saveProfileCharacter: async (name, className, portraitUrl) => {
+  saveProfileCharacter: async (name, className, portraitUrl, skillId) => {
     const token = get().authToken;
     if (!token) {
       set({ error: "Sign in to save profile characters." });
@@ -701,7 +718,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         "/api/profile/characters",
         {
           method: "POST",
-          body: JSON.stringify({ name, className, portraitUrl })
+          body: JSON.stringify({ name, className, portraitUrl, skillId })
         },
         token
       );
@@ -732,13 +749,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    if (currentState.latestLevelUpEvent) {
-      set({ combatAnimation: null, levelUpEvent: currentState.latestLevelUpEvent, promotionEvent: null });
+    const levelUpKey = getLevelUpEventKey(currentState.latestLevelUpEvent);
+    if (currentState.latestLevelUpEvent && levelUpKey && get().shownLevelUpKey !== levelUpKey) {
+      set({
+        combatAnimation: null,
+        levelUpEvent: currentState.latestLevelUpEvent,
+        promotionEvent: null,
+        shownLevelUpKey: levelUpKey
+      });
       return;
     }
 
-    if (currentState.latestPromotionEvent) {
-      set({ combatAnimation: null, levelUpEvent: null, promotionEvent: currentState.latestPromotionEvent });
+    const promotionKey = getPromotionEventKey(currentState.latestPromotionEvent);
+    if (currentState.latestPromotionEvent && promotionKey && get().shownPromotionKey !== promotionKey) {
+      set({
+        combatAnimation: null,
+        levelUpEvent: null,
+        promotionEvent: currentState.latestPromotionEvent,
+        shownPromotionKey: promotionKey
+      });
       return;
     }
 
@@ -759,8 +788,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    if (currentState.latestPromotionEvent) {
-      set({ levelUpEvent: null, promotionEvent: currentState.latestPromotionEvent, resolvedPhase: currentState.phase });
+    const promotionKey = getPromotionEventKey(currentState.latestPromotionEvent);
+    if (currentState.latestPromotionEvent && promotionKey && get().shownPromotionKey !== promotionKey) {
+      set({
+        levelUpEvent: null,
+        promotionEvent: currentState.latestPromotionEvent,
+        shownPromotionKey: promotionKey,
+        resolvedPhase: currentState.phase
+      });
       return;
     }
 

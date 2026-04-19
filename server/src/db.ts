@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import type { ActiveGameSummary, AuthUser, GameState, ProfileCharacterRecord, UnitClass } from "../../shared/game.js";
+import type { ActiveGameSummary, AuthUser, GameState, ProfileCharacterRecord, SkillId, UnitClass } from "../../shared/game.js";
 
 const globalForPrisma = globalThis as typeof globalThis & {
   prisma?: PrismaClient;
@@ -31,12 +31,13 @@ function mapAuthUser(user: {
   };
 }
 
-function mapProfileCharacter(character: { id: string; name: string; className: string; portraitUrl?: string | null }): ProfileCharacterRecord {
+function mapProfileCharacter(character: { id: string; name: string; className: string; portraitUrl?: string | null; skillId?: string | null }): ProfileCharacterRecord {
   return {
     id: character.id,
     name: character.name,
     className: character.className as UnitClass,
-    portraitUrl: character.portraitUrl ?? undefined
+    portraitUrl: character.portraitUrl ?? undefined,
+    skillId: (character.skillId as SkillId | null) ?? undefined
   };
 }
 
@@ -209,9 +210,9 @@ export async function getSessionUser(token: string) {
 
 export async function listProfileCharacters(userId: string) {
   const characters = await prisma.$queryRawUnsafe<
-    Array<{ id: string; name: string; className: string; portraitUrl: string | null }>
+    Array<{ id: string; name: string; className: string; portraitUrl: string | null; skillId: string | null }>
   >(
-    `SELECT "id", "name", "className", "portraitUrl"
+    `SELECT "id", "name", "className", "portraitUrl", "skillId"
      FROM "ProfileCharacter"
      WHERE "userId" = ?
      ORDER BY "createdAt" ASC`,
@@ -226,20 +227,23 @@ export async function createProfileCharacter(input: {
   name: string;
   className: UnitClass;
   portraitUrl?: string;
+  skillId?: SkillId;
 }) {
   await prisma.$executeRawUnsafe(
-    `INSERT INTO "ProfileCharacter" ("id", "userId", "name", "className", "portraitUrl") VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO "ProfileCharacter" ("id", "userId", "name", "className", "portraitUrl", "skillId") VALUES (?, ?, ?, ?, ?, ?)`,
     input.id,
     input.userId,
     input.name,
     input.className,
-    input.portraitUrl ?? null
+    input.portraitUrl ?? null,
+    input.skillId ?? null
   );
   return {
     id: input.id,
     name: input.name,
     className: input.className,
-    portraitUrl: input.portraitUrl
+    portraitUrl: input.portraitUrl,
+    skillId: input.skillId
   };
 }
 

@@ -170,7 +170,7 @@ model Character {
 - Connection status (Online/Away) per player
 - State persistence to DB on every mutating event; rooms survive server restarts
 - `cancelMove` — undo move before committing action
-- `restartMap` — host can restart after defeat
+- `restartMap` — DM can restart the current map at any time during an active chapter
 
 ---
 

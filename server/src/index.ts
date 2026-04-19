@@ -8,6 +8,7 @@ import {
   calculateCritChance,
   canUnitAttackAtDistance,
   checkIfDoubles,
+  CLASS_SKILLS,
   CLASS_GROWTH_RATES,
   CLASS_TEMPLATES,
   getPromotedClass,
@@ -27,6 +28,7 @@ import {
   type JoinRoomResponse,
   type PlayerPresence,
   type Position,
+  type SkillId,
   type ServerToClientEvents,
   type TerrainTile,
   type Unit,
@@ -194,6 +196,10 @@ app.post("/api/profile/characters", authenticateRequest, async (req: AuthedReque
     res.status(400).json({ message: "A valid character name and class are required." });
     return;
   }
+  const requestedSkillId = typeof req.body?.skillId === "string" ? req.body.skillId : undefined;
+  const skillId = requestedSkillId && CLASS_SKILLS[className].includes(requestedSkillId as SkillId)
+    ? (requestedSkillId as SkillId)
+    : undefined;
 
   const records = await listProfileCharacters(req.authUser!.id);
   if (records.length >= 12) {
@@ -206,7 +212,8 @@ app.post("/api/profile/characters", authenticateRequest, async (req: AuthedReque
     userId: req.authUser!.id,
     name,
     className,
-    portraitUrl
+    portraitUrl,
+    skillId
   });
   res.status(201).json({ character: record });
 });
@@ -1444,26 +1451,30 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     if (defender.stats.hp > 0) runDefenderStrikes();
   }
 
+  function applyPlayerKillEffects(killer: Unit) {
+    // Skill: Despoil — earn 100 gold on kill
+    if (killer.skillId === "despoil") {
+      const owner = state.players.find((p) => p.id === killer.ownerId);
+      if (owner) {
+        owner.gold += 100;
+        pushLog(state, `${killer.name}'s Despoil yields 100 gold!`);
+      }
+    }
+    // Skill: Lifetaker — restore 50% max HP on kill
+    if (killer.skillId === "lifetaker") {
+      const healAmt = Math.floor(killer.stats.maxHp * 0.5);
+      killer.stats.hp = Math.min(killer.stats.maxHp, killer.stats.hp + healAmt);
+      pushLog(state, `${killer.name}'s Lifetaker restores ${healAmt} HP!`);
+    }
+  }
+
   // On-kill effects for attacker
   if (defender.stats.hp === 0) {
     defender.alive = false;
     pushLog(state, `${defender.name} was defeated.`);
     if (attacker.team === "player") {
       playerCombatExpAward += 50;
-      // Skill: Despoil — earn 100 gold on kill
-      if (attacker.skillId === "despoil") {
-        const owner = state.players.find((p) => p.id === attacker.ownerId);
-        if (owner) {
-          owner.gold += 100;
-          pushLog(state, `${attacker.name}'s Despoil yields 100 gold!`);
-        }
-      }
-      // Skill: Lifetaker — restore 50% max HP on kill
-      if (attacker.skillId === "lifetaker") {
-        const healAmt = Math.floor(attacker.stats.maxHp * 0.5);
-        attacker.stats.hp = Math.min(attacker.stats.maxHp, attacker.stats.hp + healAmt);
-        pushLog(state, `${attacker.name}'s Lifetaker restores ${healAmt} HP!`);
-      }
+      applyPlayerKillEffects(attacker);
     }
   }
 
@@ -1471,6 +1482,10 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   if (attacker.stats.hp === 0) {
     attacker.alive = false;
     pushLog(state, `${attacker.name} fell in battle.`);
+    if (defender.team === "player") {
+      playerCombatExpAward += 50;
+      applyPlayerKillEffects(defender);
+    }
   }
 
   if (playerCombatExpRecipient && playerCombatExpRecipient.alive) {
@@ -2051,8 +2066,8 @@ io.on("connection", (socket) => {
     if (!room || room.state.hostId !== playerId) {
       return;
     }
-    if (!(room.state.status === "complete" && room.state.winner === "enemy")) {
-      io.to(socket.id).emit("errorMessage", "The DM can only restart after a defeat.");
+    if (room.state.status === "lobby") {
+      io.to(socket.id).emit("errorMessage", "Start the battle before restarting the map.");
       return;
     }
     resetBattleState(room.state);

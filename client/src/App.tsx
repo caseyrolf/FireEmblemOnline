@@ -485,7 +485,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
             >
               Recruit Unit
             </button>
-            <button className="secondary" onClick={() => void saveProfileCharacter(name, className, portraitUrl)} disabled={!name.trim()}>
+            <button className="secondary" onClick={() => void saveProfileCharacter(name, className, portraitUrl, skillId)} disabled={!name.trim()}>
               Save To Profile
             </button>
             <button className="secondary" disabled={!isHost || state.characterDrafts.length === 0} onClick={startBattle}>
@@ -1104,7 +1104,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const hoveredUnit = state.units.find((unit) => unit.id === hoveredUnitId && unit.alive);
   const highlights = useMemo(() => new Set(state.highlights.map(tileKey)), [state.highlights]);
   const isHost = state.hostId === playerId;
-  const canRestart = state.status === "complete" && state.winner === "enemy" && isHost;
+  const canRestart = isHost;
   const canEndGame = state.status !== "complete" && isHost;
   const hasBattleOutcome = state.phase === "victory" || state.phase === "defeat" || state.status === "complete";
   const showOutcomeOverlay = hasBattleOutcome && !combatAnimation && !levelUpEvent && !phaseAnnouncement;
