@@ -103,6 +103,10 @@ const serverUrl = resolveServerUrl();
 const SESSION_KEY = "fire-emblem-online-session";
 const AUTH_KEY = "fire-emblem-online-auth";
 const ANNOUNCED_PHASES = new Set<PhaseAnnouncement>(["player", "enemy", "victory", "defeat"]);
+const ENEMY_MOVE_MS_PER_TILE = 200;
+const ENEMY_MOVE_MIN_DELAY_MS = 220;
+
+let pendingEnemyFlushTimer: number | null = null;
 
 function buildCombatAnimation(state: GameState) {
   if (!state.latestCombatEvent) {
@@ -213,13 +217,72 @@ function presentStateUpdate(set: (partial: Partial<AppStore>) => void, get: () =
   return false;
 }
 
-function flushPendingStates(set: (partial: Partial<AppStore>) => void, get: () => AppStore) {
-  while (get().pendingEnemyStates.length > 0) {
-    const [nextState, ...rest] = get().pendingEnemyStates;
-    set({ pendingEnemyStates: rest });
-    if (presentStateUpdate(set, get, nextState)) {
-      return;
+function clearPendingEnemyFlushTimer() {
+  if (pendingEnemyFlushTimer !== null) {
+    window.clearTimeout(pendingEnemyFlushTimer);
+    pendingEnemyFlushTimer = null;
+  }
+}
+
+function estimateEnemyReplayDelayMs(previousState: GameState | null, nextState: GameState) {
+  if (!previousState) {
+    return 0;
+  }
+
+  let movedTiles = 0;
+  for (const nextUnit of nextState.units) {
+    if (!nextUnit.alive || nextUnit.team !== "enemy") {
+      continue;
     }
+
+    const previousUnit = previousState.units.find((unit) => unit.id === nextUnit.id);
+    if (!previousUnit || !previousUnit.alive) {
+      continue;
+    }
+
+    const distanceMoved =
+      Math.abs(previousUnit.position.x - nextUnit.position.x) +
+      Math.abs(previousUnit.position.y - nextUnit.position.y);
+    movedTiles = Math.max(movedTiles, distanceMoved);
+  }
+
+  if (movedTiles === 0) {
+    return 0;
+  }
+
+  return Math.max(ENEMY_MOVE_MIN_DELAY_MS, movedTiles * ENEMY_MOVE_MS_PER_TILE + 60);
+}
+
+function schedulePendingEnemyFlush(
+  set: (partial: Partial<AppStore>) => void,
+  get: () => AppStore,
+  delayMs: number
+) {
+  clearPendingEnemyFlushTimer();
+  pendingEnemyFlushTimer = window.setTimeout(() => {
+    pendingEnemyFlushTimer = null;
+    flushPendingStates(set, get);
+  }, Math.max(0, delayMs));
+}
+
+function flushPendingStates(set: (partial: Partial<AppStore>) => void, get: () => AppStore) {
+  clearPendingEnemyFlushTimer();
+
+  if (get().pendingEnemyStates.length === 0) {
+    return;
+  }
+
+  const previousState = get().state;
+  const [nextState, ...rest] = get().pendingEnemyStates;
+  set({ pendingEnemyStates: rest });
+
+  if (presentStateUpdate(set, get, nextState)) {
+    return;
+  }
+
+  if (get().pendingEnemyStates.length > 0) {
+    const replayDelayMs = estimateEnemyReplayDelayMs(previousState, nextState);
+    schedulePendingEnemyFlush(set, get, replayDelayMs);
   }
 }
 
@@ -401,6 +464,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const token = get().authToken;
     clearSavedToken();
     clearSavedSession();
+    clearPendingEnemyFlushTimer();
 
     set({
       authToken: null,
@@ -545,6 +609,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
     }
     clearSavedSession();
+    clearPendingEnemyFlushTimer();
     set({
       state: null,
       playerId: null,
