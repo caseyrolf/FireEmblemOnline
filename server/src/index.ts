@@ -19,6 +19,7 @@ import {
   type BaseUnitClass,
   type CharacterDraft,
   type ClientToServerEvents,
+  type CombatContext,
   type CombatLogEntry,
   type GameMap,
   type GameState,
@@ -928,7 +929,8 @@ function buildFreshPlayerUnit(state: GameState, draft: CharacterDraft, index: nu
       weapons: getWeaponsForClass(draft.className),
       items: [ITEMS[0]] // potion
     },
-    equippedWeapon: getWeaponsForClass(draft.className)[0] || null // equip first weapon
+    equippedWeapon: getWeaponsForClass(draft.className)[0] || null, // equip first weapon
+    skillId: draft.skillId ?? null
   };
 }
 
@@ -1088,7 +1090,8 @@ function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boole
         weapons: getWeaponsForClass(enemy.className),
         items: []
       },
-      equippedWeapon: getWeaponsForClass(enemy.className)[0] || null // equip first weapon
+      equippedWeapon: getWeaponsForClass(enemy.className)[0] || null, // equip first weapon
+      skillId: null
     };
   });
 
@@ -1214,6 +1217,88 @@ function grantExp(state: GameState, unit: Unit, amount: number) {
   }
 }
 
+/** Returns the number of living allied units (same team) adjacent to `unit`. */
+function countAdjacentAllies(state: GameState, unit: Unit): number {
+  return state.units.filter(
+    (u) => u.alive && u.id !== unit.id && u.team === unit.team &&
+      Math.abs(u.position.x - unit.position.x) + Math.abs(u.position.y - unit.position.y) === 1
+  ).length;
+}
+
+/**
+ * Execute a single strike from `striker` onto `struck`.
+ * Returns the amount of damage dealt (0 on miss).
+ * Mutates `struck.stats.hp` and logs to state.
+ */
+function executeStrike(
+  state: GameState,
+  striker: Unit,
+  struck: Unit,
+  terrainDefense: number,
+  ctx: CombatContext,
+  label: string
+): number {
+  const hitChance = calculateHitChance(striker, struck, ctx);
+  if (Math.random() * 100 >= hitChance) {
+    pushLog(state, `${striker.name} missed ${struck.name}.`);
+    return 0;
+  }
+
+  const critChance = calculateCritChance(striker, struck);
+  const isCrit = Math.random() * 100 < critChance;
+  let baseDamage = calculateDamage(striker, struck, terrainDefense);
+
+  // Skill: Ignis — 30% chance to add half of the off-stat to damage
+  if (striker.skillId === "ignis" && Math.random() < 0.3) {
+    const bonus = striker.equippedWeapon?.type === "Magic Tome"
+      ? Math.floor(striker.stats.str / 2)
+      : Math.floor(striker.stats.mag / 2);
+    if (bonus > 0) {
+      baseDamage += bonus;
+      pushLog(state, `${striker.name}'s Ignis flares!`);
+    }
+  }
+
+  let damage = isCrit ? baseDamage * 2 : baseDamage;
+
+  // Skill: Aether — 25% chance: double damage + heal half
+  if (striker.skillId === "aether" && Math.random() < 0.25) {
+    damage = baseDamage * 2;
+    const healAmt = Math.floor(damage / 2);
+    striker.stats.hp = Math.min(striker.stats.maxHp, striker.stats.hp + healAmt);
+    pushLog(state, `${striker.name}'s Aether activates! Healed ${healAmt} HP.`);
+  }
+  // Skill: Sol — 30% chance to restore HP equal to damage dealt
+  else if (striker.skillId === "sol" && Math.random() < 0.3) {
+    striker.stats.hp = Math.min(striker.stats.maxHp, striker.stats.hp + damage);
+    pushLog(state, `${striker.name}'s Sol activates! Healed ${damage} HP.`);
+  }
+
+  // Skill: Pavise (defender) — 30% chance to halve physical damage taken
+  if (struck.skillId === "pavise" && striker.equippedWeapon?.type !== "Magic Tome" && Math.random() < 0.3) {
+    damage = Math.floor(damage / 2);
+    pushLog(state, `${struck.name}'s Pavise reduces the blow!`);
+  }
+  // Skill: Great Shield (defender) — 15% chance to negate all physical damage
+  else if (struck.skillId === "great-shield" && striker.equippedWeapon?.type !== "Magic Tome" && Math.random() < 0.15) {
+    damage = 0;
+    pushLog(state, `${struck.name}'s Great Shield nullifies the attack!`);
+  }
+
+  if (damage > 0) {
+    // Skill: Miracle — if HP > 1, 30% chance to survive lethal blow with 1 HP
+    if (struck.skillId === "miracle" && struck.stats.hp > 1 && damage >= struck.stats.hp && Math.random() < 0.3) {
+      damage = struck.stats.hp - 1;
+      pushLog(state, `${struck.name}'s Miracle keeps them standing!`);
+    }
+    struck.stats.hp = Math.max(0, struck.stats.hp - damage);
+    const critText = isCrit ? " (critical!)" : "";
+    pushLog(state, `${label} ${damage} damage${critText}.`);
+  }
+
+  return damage;
+}
+
 function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   const defenderTerrainDefense = getTerrainDefense(state.map, defender.position);
   const attackerTerrainDefense = getTerrainDefense(state.map, attacker.position);
@@ -1228,67 +1313,105 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     playerCombatExpAward += PLAYER_DEFEND_COMBAT_EXP;
   }
 
+  const combatDistance = distance(attacker.position, defender.position);
+
+  // Build combat contexts (adjacentAllies only relevant for Charm holders)
+  const attackerCtx: CombatContext = {
+    initiating: true,
+    distance: combatDistance,
+    adjacentAllies: attacker.skillId === "charm" ? countAdjacentAllies(state, attacker) : 0
+  };
+  const defenderCtx: CombatContext = {
+    initiating: false,
+    distance: combatDistance,
+    adjacentAllies: defender.skillId === "charm" ? countAdjacentAllies(state, defender) : 0
+  };
+
   // Determine number of attacks
-  let attackerAttacks = 1;
-  let defenderAttacks = 1;
+  let attackerStrikes = 1;
+  let defenderStrikes = 1;
   if (checkIfDoubles(attacker, defender)) {
-    attackerAttacks = 2;
+    attackerStrikes = 2;
   } else if (checkIfDoubles(defender, attacker)) {
-    defenderAttacks = 2;
+    defenderStrikes = 2;
   }
 
-  // Attacker's attacks
-  for (let i = 0; i < attackerAttacks && defender.stats.hp > 0; i++) {
-    const hitChance = calculateHitChance(attacker, defender);
-    const hitRoll = Math.random() * 100;
-    if (hitRoll < hitChance) {
-      const critChance = calculateCritChance(attacker, defender);
-      const critRoll = Math.random() * 100;
-      const isCrit = critRoll < critChance;
-      const baseDamage = calculateDamage(attacker, defender, defenderTerrainDefense);
-      const damage = isCrit ? baseDamage * 2 : baseDamage;
-      defender.stats.hp = Math.max(0, defender.stats.hp - damage);
-      const critText = isCrit ? " (critical!)" : "";
-      pushLog(state, `${attacker.name} hit ${defender.name} for ${damage} damage${critText}.`);
-    } else {
-      pushLog(state, `${attacker.name} missed ${defender.name}.`);
+  // Skill: Vantage — defender attacks first when HP < 50%
+  const defenderHasVantage = defender.skillId === "vantage" && defender.stats.hp < defender.stats.maxHp * 0.5;
+  // Skill: Magic Counter — defender can counter at range 2 with any weapon
+  const defenderCanCounter = canUnitAttackAtDistance(defender, combatDistance) ||
+    (defender.skillId === "magic-counter" && combatDistance === 2);
+
+  function runAttackerStrikes() {
+    for (let i = 0; i < attackerStrikes && defender.stats.hp > 0; i++) {
+      // Skill: Dual Strike+ — +10 damage on second strike (treated as bonus on hits)
+      const ctx = attacker.skillId === "dual-strike-plus" && i === 1
+        ? { ...attackerCtx, dualStrikePlus: true }
+        : attackerCtx;
+      let label = `${attacker.name} hit ${defender.name} for`;
+      let damage = executeStrike(state, attacker, defender, defenderTerrainDefense, ctx, label);
+      // Apply Dual Strike+ flat bonus after if it landed
+      if (attacker.skillId === "dual-strike-plus" && i === 1 && damage > 0) {
+        const bonus = Math.min(10, defender.stats.hp);
+        defender.stats.hp = Math.max(0, defender.stats.hp - bonus);
+        if (bonus > 0) pushLog(state, `Dual Strike+ adds ${bonus} extra damage!`);
+      }
     }
   }
 
+  function runDefenderStrikes() {
+    if (!defenderCanCounter || defender.stats.hp === 0) return;
+    for (let i = 0; i < defenderStrikes && attacker.stats.hp > 0; i++) {
+      const label = `${defender.name} countered for`;
+      const damage = executeStrike(state, defender, attacker, attackerTerrainDefense, defenderCtx, label);
+      // Skill: Counter — reflect physical damage back to the striker
+      if (attacker.skillId === "counter" && damage > 0 && defender.equippedWeapon?.type !== "Magic Tome") {
+        const reflected = Math.min(damage, defender.stats.hp);
+        defender.stats.hp = Math.max(0, defender.stats.hp - reflected);
+        pushLog(state, `${attacker.name}'s Counter reflects ${reflected} damage!`);
+      }
+    }
+  }
+
+  if (defenderHasVantage) {
+    pushLog(state, `${defender.name}'s Vantage strikes first!`);
+    runDefenderStrikes();
+    if (attacker.stats.hp > 0) runAttackerStrikes();
+  } else {
+    runAttackerStrikes();
+    if (defender.stats.hp > 0) runDefenderStrikes();
+  }
+
+  // On-kill effects for attacker
   if (defender.stats.hp === 0) {
     defender.alive = false;
     pushLog(state, `${defender.name} was defeated.`);
     if (attacker.team === "player") {
       playerCombatExpAward += 50;
-    }
-  } else {
-    // Defender's counterattacks
-    const retaliateDistance = distance(attacker.position, defender.position);
-    if (canUnitAttackAtDistance(defender, retaliateDistance)) {
-      for (let i = 0; i < defenderAttacks && attacker.stats.hp > 0; i++) {
-        const hitChance = calculateHitChance(defender, attacker);
-        const hitRoll = Math.random() * 100;
-        if (hitRoll < hitChance) {
-          const critChance = calculateCritChance(defender, attacker);
-          const critRoll = Math.random() * 100;
-          const isCrit = critRoll < critChance;
-          const baseDamage = calculateDamage(defender, attacker, attackerTerrainDefense);
-          const damage = isCrit ? baseDamage * 2 : baseDamage;
-          attacker.stats.hp = Math.max(0, attacker.stats.hp - damage);
-          const critText = isCrit ? " (critical!)" : "";
-          pushLog(state, `${defender.name} countered for ${damage}${critText}.`);
-        } else {
-          pushLog(state, `${defender.name} missed ${attacker.name}.`);
+      // Skill: Despoil — earn 100 gold on kill
+      if (attacker.skillId === "despoil") {
+        const owner = state.players.find((p) => p.id === attacker.ownerId);
+        if (owner) {
+          owner.gold += 100;
+          pushLog(state, `${attacker.name}'s Despoil yields 100 gold!`);
         }
       }
-      if (attacker.stats.hp === 0) {
-        attacker.alive = false;
-        pushLog(state, `${attacker.name} fell in battle.`);
+      // Skill: Lifetaker — restore 50% max HP on kill
+      if (attacker.skillId === "lifetaker") {
+        const healAmt = Math.floor(attacker.stats.maxHp * 0.5);
+        attacker.stats.hp = Math.min(attacker.stats.maxHp, attacker.stats.hp + healAmt);
+        pushLog(state, `${attacker.name}'s Lifetaker restores ${healAmt} HP!`);
       }
     }
   }
 
-  if (playerCombatExpRecipient) {
+  // On-kill effects for defender counter
+  if (attacker.stats.hp === 0) {
+    attacker.alive = false;
+    pushLog(state, `${attacker.name} fell in battle.`);
+  }
+
+  if (playerCombatExpRecipient && playerCombatExpRecipient.alive) {
     grantExp(state, playerCombatExpRecipient, playerCombatExpAward);
   }
 
@@ -1308,6 +1431,18 @@ function resolveHeal(state: GameState, healer: Unit, target: Unit) {
     grantExp(state, healer, CLERIC_HEAL_EXP);
   }
   pushLog(state, `${healer.name} healed ${target.name} for ${actualHeal} HP.`);
+}
+
+function getConsumableHealAmount(item: Item) {
+  switch (item.id) {
+    case "hi-potion":
+      return 20;
+    case "elixir":
+      return 999;
+    case "potion":
+    default:
+      return 10;
+  }
 }
 
 function checkWinState(state: GameState) {
@@ -1429,6 +1564,14 @@ async function takeEnemyPhase(room: Room) {
     state.phase = "player";
     state.turnCount += 1;
     resetPlayerActions(state);
+    // Skill: Renewal — restore 10% max HP at the start of each player phase
+    for (const unit of state.units.filter((u) => u.alive && u.team === "player" && u.skillId === "renewal")) {
+      const healAmt = Math.max(1, Math.floor(unit.stats.maxHp * 0.1));
+      if (unit.stats.hp < unit.stats.maxHp) {
+        unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + healAmt);
+        pushLog(state, `${unit.name}'s Renewal restores ${healAmt} HP.`);
+      }
+    }
     pushLog(state, `Turn ${state.turnCount} begins.`);
   }
   await emitState(room);
@@ -1554,7 +1697,7 @@ io.on("connection", (socket) => {
     await emitState(room);
   });
 
-  socket.on("createCharacter", async ({ roomCode, name, className, portraitUrl }) => {
+  socket.on("createCharacter", async ({ roomCode, name, className, portraitUrl, skillId }) => {
     const room = await ensureRoom(socket.id, roomCode);
     if (!room || room.state.status !== "lobby" || !playerId) {
       return;
@@ -1575,7 +1718,8 @@ io.on("connection", (socket) => {
       ownerId: playerId,
       name: trimmedName,
       className,
-      portraitUrl: portraitUrl?.startsWith("data:image/") ? portraitUrl : undefined
+      portraitUrl: portraitUrl?.startsWith("data:image/") ? portraitUrl : undefined,
+      skillId
     };
     room.state.characterDrafts.push(draft);
     pushLog(room.state, `${player.name} recruited ${draft.name} the ${draft.className}.`);
@@ -1808,8 +1952,10 @@ io.on("connection", (socket) => {
     }
     const item = unit.inventory.items[itemIndex];
     if (item.type === "Potion") {
-      unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + 10);
-      pushLog(room.state, `${unit.name} used a potion and recovered 10 HP.`);
+      const healAmount = getConsumableHealAmount(item);
+      const recoveredHp = Math.min(healAmount, unit.stats.maxHp - unit.stats.hp);
+      unit.stats.hp = Math.min(unit.stats.maxHp, unit.stats.hp + healAmount);
+      pushLog(room.state, `${unit.name} used ${item.name} and recovered ${recoveredHp} HP.`);
       unit.inventory.items.splice(itemIndex, 1);
       unit.acted = true;
       room.state.selectedUnitId = null;

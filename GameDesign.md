@@ -87,17 +87,17 @@ model Character {
 - ✅ Enemy AI phase (simple: greedy attack highest threat, fallback to move toward objective).
 - 🔶 Win conditions:
   - ✅ "Route" (defeat all enemies)
-  - ❌ "Defend X turns"
-  - ❌ "Arrive" (any player reaches tile) — tile is rendered but win check is not implemented
+  - ✅ "Defend X turns"
+  - ✅ "Arrive" (any player reaches tile)
 
 ### Phase 3 — Persistence & Progression ✅
 - ✅ Characters keep level/exp/stats/inventory across maps.
 - ✅ Level-up logic + growth rolls (server-side random, per-class growth rate tables).
-- ❌ Promotion at level 20 (class → advanced class with new stats/growths/weapons).
+- ✅ Promotion at level 20 (class → advanced class with new stats/growths/weapons).
 - ✅ End-of-map → Base Camp screen (shop UI with gold earned from map).
 
 ### Phase 4 — Polish & Multi-Map ✅
-- ✅ Chain 3–5 hardcoded maps with different win conditions and starting positions (5 chapter campaign implemented).
+- ✅ Chain hardcoded maps with different win conditions and starting positions (7 chapter campaign implemented).
 - ✅ Pass turn button (any player can end their turn).
 - 🔶 Trade / item usage / chest & house interactions — item usage via potions implemented; trading between units not yet implemented.
 - ✅ Full game state saved in DB after every major action (reconnecting players get current state).
@@ -154,7 +154,7 @@ model Character {
 - Terrain effects: move cost, defense bonus, avoid bonus
 
 ### Campaign ✅
-- 5-chapter campaign: Border Skirmish → Last Redoubt
+- 7-chapter campaign with objective variety (Route, Defend, Arrive)
 - Enemy stat scaling per chapter; crowd penalty for large rosters
 - Chapter carryover: stats, level, EXP, inventory all preserved; HP restored
 
@@ -179,10 +179,7 @@ model Character {
 ### High Priority (Core Gaps)
 | Feature | Notes |
 |---|---|
-| ❌ "Arrive" win condition | Goal tile exists, no detection logic in `checkWinState` |
-| ❌ "Defend X turns" win condition | Entirely unimplemented |
 | ❌ Weapon triangle advantage | `WeaponType` defined but no hit/damage modifier applied |
-| ❌ Class promotion (level 20) | No mechanic exists |
 | ❌ Unit trading | Trade event not implemented |
 | ❌ Weapon durability | Weapons have infinite uses |
 
@@ -195,7 +192,7 @@ model Character {
 | ❌ Skill system | "Miracle", "Vantage", activation-condition skills |
 | ❌ Support / pair-up mechanics | Classic Fire Emblem feel |
 | ❌ Fog of war / vision range | Adds tension |
-| ❌ In-game text chat | |
+| ✅ In-game text chat | Implemented via socket event and persisted room chat history |
 | ❌ Spectator mode | All connected sockets currently join as players |
 | ❌ Turn timer | No time limit per player turn |
 | ❌ Undo last move | Before action committed |
@@ -227,3 +224,51 @@ model Character {
 | Latency | ✅ Optimistic updates + server reconciliation |
 | Balance | Provide admin dashboard to tweak enemy stats or growth rates per campaign |
 | Performance | Limit grid to ≤ 16×16; use memoized React components for each tile |
+
+---
+
+## 9. Next 3 Features to Implement (Recommended)
+
+These are the highest-impact additions that close current gameplay gaps while reusing existing architecture.
+
+### 1) Weapon Triangle Advantage ❌
+**Why now:** Adds tactical depth to every combat exchange with minimal UI and data-model disruption.
+
+**Implementation scope:**
+- Define matchup table (example): Sword > Axe > Lance > Sword.
+- Apply small hit/damage modifiers in server combat resolution (example baseline: ±15 hit, ±1 damage).
+- Reflect triangle advantage/disadvantage in combat preview text/icons.
+- Log modifier source in combat log for clarity/debugging.
+
+**Acceptance criteria:**
+- Server-authoritative combat outcomes include triangle modifiers consistently.
+- Combat preview matches resolved values (no client/server drift).
+- Neutral weapon matchups remain unchanged.
+
+### 2) Unit Trading ❌
+**Why now:** Inventory management is already central to your campaign loop and shop; trading unlocks tactical item distribution and class cooperation.
+
+**Implementation scope:**
+- Add `tradeUnit` socket event with server validation (adjacent ally, both alive, same team, player controls initiating unit).
+- Allow weapon/item transfer with inventory capacity checks.
+- Update action menu to expose Trade when an adjacent ally exists.
+- Emit clear combat-log entries for transferred items.
+
+**Acceptance criteria:**
+- Adjacent allied units can exchange items/weapons in battle.
+- Illegal trades are rejected server-side with no client desync.
+- Traded equipment remains persisted across chapter transitions.
+
+### 3) Weapon Durability ❌
+**Why now:** Introduces long-term resource pressure that fits Fire Emblem identity and improves Base Camp purchase decisions.
+
+**Implementation scope:**
+- Add `durability` and `maxDurability` fields to weapon instances.
+- Decrement durability on each attack or staff use; break/remove at 0.
+- Prevent equipping broken weapons and auto-select next valid option.
+- Show durability in unit inventory UI and combat forecast.
+
+**Acceptance criteria:**
+- Weapon uses decrement correctly on server-resolved actions.
+- Broken weapons are removed/disabled consistently for all clients.
+- Persisted room state and reconnect both preserve current durability values.

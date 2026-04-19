@@ -55,7 +55,7 @@ type AppStore = {
   resumeSession: () => Promise<JoinRoomResponse | null>;
   returnToGame: (game: ActiveGameSummary) => Promise<JoinRoomResponse>;
   exitCurrentGame: () => Promise<void>;
-  createCharacter: (name: string, className: UnitClass, portraitUrl?: string) => void;
+  createCharacter: (name: string, className: UnitClass, portraitUrl?: string, skillId?: string) => void;
   startBattle: () => void;
   selectUnit: (unitId: string) => void;
   moveUnit: (unitId: string, x: number, y: number) => void;
@@ -551,10 +551,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ error: error instanceof Error ? error.message : "Could not remove active game." });
     }
   },
-  createCharacter: (name, className, portraitUrl) => {
+  createCharacter: (name, className, portraitUrl, skillId) => {
     const roomCode = get().state?.roomCode;
     if (roomCode) {
-      get().socket?.emit("createCharacter", { roomCode, name, className, portraitUrl });
+      get().socket?.emit("createCharacter", { roomCode, name, className, portraitUrl, skillId: skillId as import("../../shared/game").SkillId | undefined });
     }
   },
   startBattle: () => {

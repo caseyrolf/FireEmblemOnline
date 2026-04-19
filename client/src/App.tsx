@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF } from "../../shared/game";
+import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -343,6 +343,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   const [name, setName] = useState("");
   const [className, setClassName] = useState(BASE_CLASS_OPTIONS[0]);
   const [portraitUrl, setPortraitUrl] = useState<string | undefined>(undefined);
+  const [skillId, setSkillId] = useState<SkillId>(CLASS_SKILLS[BASE_CLASS_OPTIONS[0]][0]);
   const isHost = state.hostId === playerId;
   const statusItems = [
     { label: "Socket", value: connected ? "Live" : "Connecting", tone: connected ? "good" as const : "warn" as const },
@@ -354,6 +355,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   function resetDraftForm() {
     setName("");
     setPortraitUrl(undefined);
+    setSkillId(CLASS_SKILLS[className][0]);
   }
 
   function onPortraitSelected(file: File | undefined) {
@@ -426,7 +428,11 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
           </label>
           <label className="field">
             <span>Class</span>
-            <select value={className} onChange={(event) => setClassName(event.target.value as typeof className)}>
+            <select value={className} onChange={(event) => {
+              const next = event.target.value as typeof className;
+              setClassName(next);
+              setSkillId(CLASS_SKILLS[next][0]);
+            }}>
               {BASE_CLASS_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
@@ -434,6 +440,25 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
               ))}
             </select>
           </label>
+          <fieldset className="field">
+            <legend>Skill</legend>
+            {CLASS_SKILLS[className].map((sid) => {
+              const skill = SKILLS[sid];
+              return (
+                <label key={sid} className="skill-option">
+                  <input
+                    type="radio"
+                    name="skill"
+                    value={sid}
+                    checked={skillId === sid}
+                    onChange={() => setSkillId(sid)}
+                  />
+                  <span className="skill-name">{skill.name}</span>
+                  <span className="skill-desc muted">{skill.description}</span>
+                </label>
+              );
+            })}
+          </fieldset>
           <label className="field">
             <span>Portrait Override</span>
             <input
@@ -453,7 +478,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
           <div className="stack-actions">
             <button
               onClick={() => {
-                createCharacter(name, className, portraitUrl);
+                createCharacter(name, className, portraitUrl, skillId);
                 resetDraftForm();
               }}
               disabled={!name.trim()}
@@ -483,7 +508,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
                     <strong>{character.name}</strong>
                     <span>{character.className}</span>
                   </div>
-                  <button onClick={() => createCharacter(character.name, character.className, character.portraitUrl)}>
+                  <button onClick={() => createCharacter(character.name, character.className, character.portraitUrl, character.skillId)}>
                     Recruit From Profile
                   </button>
                 </div>
