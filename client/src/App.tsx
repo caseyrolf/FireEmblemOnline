@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId } from "../../shared/game";
+import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId, type TerrainTile } from "../../shared/game";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -1091,6 +1091,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const endGame = useAppStore((store) => store.endGame);
   const exitCurrentGame = useAppStore((store) => store.exitCurrentGame);
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
+  const [hoveredTile, setHoveredTile] = useState<{ x: number; y: number; tile: TerrainTile } | null>(null);
   const [animatedPositions, setAnimatedPositions] = useState<Record<string, Position>>({});
   const [animationState, setAnimationState] = useState<Record<string, { path: Position[]; startedAt: number }>>({});
   const [activeMobileTab, setActiveMobileTab] = useState<"map" | "actions" | "detail" | "log" | "chat">(() => {
@@ -1324,7 +1325,8 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
                     className={`tile ${isHighlighted ? "highlight" : ""} ${isSelected ? "selected" : ""} ${isAttackTarget ? "attack-target" : ""} ${isHealTarget ? "heal-target" : ""} ${isEnemyMovementTile ? "enemy-range" : ""}`}
                     style={{ backgroundImage: `url(${getTerrainImage(tile.type)})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
                     title={TERRAIN_STYLE[tile.type]?.label || tile.type}
-                    onMouseEnter={() => setHoveredUnitId(occupant?.id ?? null)}
+                    onMouseEnter={() => { setHoveredUnitId(occupant?.id ?? null); setHoveredTile({ x, y, tile }); }}
+                    onMouseLeave={() => setHoveredTile(null)}
                     onClick={() => {
                       if (occupant) {
                         if (selectedUnit && occupant.team === "enemy" && selectedUnit.ownerId === playerId && !selectedUnit.acted && unitCanAttack(selectedUnit, occupant)) {
@@ -1443,6 +1445,16 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         </section>
         <section className={`panel unit-detail-panel battle-pane ${activeMobileTab === "detail" ? "is-active" : "is-inactive"}`}>
           <h3>Unit Detail</h3>
+          {hoveredTile && (
+            <div className="terrain-info-card">
+              <strong>{TERRAIN_STYLE[hoveredTile.tile.type]?.label ?? hoveredTile.tile.type}</strong>
+              <div className="terrain-info-stats">
+                <span>DEF <strong>+{hoveredTile.tile.defense}</strong></span>
+                <span>AVO <strong>+{hoveredTile.tile.avoid}</strong></span>
+                <span>Move Cost <strong>{hoveredTile.tile.moveCost === 99 ? "—" : hoveredTile.tile.moveCost}</strong></span>
+              </div>
+            </div>
+          )}
           {hoveredUnit && hoveredUnit.team === "enemy" ? (
             <div className="detail-card">
               <div className="detail-overview">

@@ -803,6 +803,28 @@ fieldset.field legend {
   min-width: 360px;
 }
 
+.terrain-info-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  margin-bottom: 0.5rem;
+  color: #0d1f35;
+}
+
+.terrain-info-stats {
+  display: flex;
+  gap: 1.2rem;
+  font-size: 0.85rem;
+  color: #3a4a5c;
+}
+
+.terrain-info-stats strong {
+  color: #0d1f35;
+}
+
 .actions-unit-header {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);

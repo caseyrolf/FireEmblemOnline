@@ -858,7 +858,6 @@ function seededEnemyStats(className: UnitClass, level: number = 1, enemyCount: n
     const statPenalty = Math.min(2, Math.floor((crowdPenalty + 1) / 2));
     const hpPenalty = statPenalty * 2;
     base.maxHp = Math.max(template.maxHp, base.maxHp - hpPenalty);
-    base.hp = Math.max(1, Math.min(base.maxHp, base.hp - hpPenalty));
     base.str = Math.max(template.str, base.str - statPenalty);
     base.mag = Math.max(template.mag, base.mag - statPenalty);
     base.skl = Math.max(template.skl, base.skl - statPenalty);
@@ -869,13 +868,15 @@ function seededEnemyStats(className: UnitClass, level: number = 1, enemyCount: n
 
   // Global enemy nerf to keep battles less punishing on compact maps.
   base.maxHp = Math.max(1, base.maxHp - 3);
-  base.hp = Math.max(1, Math.min(base.maxHp, base.hp - 3));
   base.str = Math.max(0, base.str - 1);
   base.mag = Math.max(0, base.mag - 1);
   base.skl = Math.max(0, base.skl - 1);
   base.spd = Math.max(0, base.spd - 1);
   base.def = Math.max(0, base.def - 1);
   base.res = Math.max(0, base.res - 1);
+
+  // Enemies always spawn at full HP.
+  base.hp = base.maxHp;
 
   return base;
 }
@@ -905,6 +906,90 @@ function getWeaponsForClass(className: UnitClass): Weapon[] {
     default:
       return [];
   }
+}
+
+type EnemySpawnDefinition = {
+  name: string;
+  className: UnitClass;
+  position: Position;
+};
+
+function buildEnemyUnit(
+  state: GameState,
+  enemy: EnemySpawnDefinition,
+  occupiedSpawnTiles: Set<string>,
+  enemyCount: number
+): Unit {
+  const position = findNearestOpenSpawn(state.map, enemy.position, occupiedSpawnTiles);
+  const weapons = getWeaponsForClass(enemy.className);
+  return {
+    id: cryptoRandomId(),
+    name: enemy.name,
+    className: enemy.className,
+    team: "enemy",
+    portraitUrl: getPortraitForUnit("enemy", enemy.className),
+    position,
+    originalPosition: { ...position },
+    stats: seededEnemyStats(enemy.className, state.chapter, enemyCount),
+    acted: false,
+    moved: false,
+    level: state.chapter,
+    exp: 0,
+    alive: true,
+    inventory: {
+      weapons,
+      items: []
+    },
+    equippedWeapon: weapons[0] || null,
+    skillId: null
+  };
+}
+
+function getDefendReinforcementWave(state: GameState): EnemySpawnDefinition[] {
+  const waveNumber = Math.floor((state.turnCount - 1) / 2);
+  const entryPoints: Position[] = [
+    { x: state.map.width - 1, y: state.map.height - 1 },
+    { x: state.map.width - 1, y: Math.max(0, state.map.height - 3) },
+    { x: state.map.width - 1, y: Math.floor(state.map.height / 2) },
+    { x: state.map.width - 1, y: 1 },
+    { x: Math.max(0, state.map.width - 2), y: 0 },
+    { x: Math.floor(state.map.width / 2), y: 0 }
+  ];
+  const classCycle: UnitClass[] = ["Brigand", "Archer", "Knight", "Mage"];
+  const firstClass = classCycle[(state.chapter + waveNumber - 1) % classCycle.length];
+  const secondClass = classCycle[(state.chapter + waveNumber) % classCycle.length];
+  const firstEntry = entryPoints[((waveNumber - 1) * 2) % entryPoints.length];
+  const secondEntry = entryPoints[((waveNumber - 1) * 2 + 1) % entryPoints.length];
+
+  return [
+    {
+      name: `Reinforcement ${waveNumber}A`,
+      className: firstClass,
+      position: firstEntry
+    },
+    {
+      name: `Reinforcement ${waveNumber}B`,
+      className: secondClass,
+      position: secondEntry
+    }
+  ];
+}
+
+function spawnDefendReinforcements(state: GameState) {
+  if (state.map.objective.type !== "defend" || state.turnCount < 3 || state.turnCount % 2 === 0) {
+    return 0;
+  }
+
+  const occupiedSpawnTiles = new Set<string>(
+    state.units.filter((unit) => unit.alive).map((unit) => positionKey(unit.position))
+  );
+  const reinforcements = getDefendReinforcementWave(state);
+  const enemyCount = state.units.filter((unit) => unit.team === "enemy" && unit.alive).length + reinforcements.length;
+  const enemyUnits = reinforcements.map((enemy) => buildEnemyUnit(state, enemy, occupiedSpawnTiles, enemyCount));
+
+  state.units.push(...enemyUnits);
+  pushLog(state, "Enemy reinforcements arrived.");
+  return enemyUnits.length;
 }
 
 function buildFreshPlayerUnit(state: GameState, draft: CharacterDraft, index: number, occupiedSpawnTiles: Set<string>): Unit {
@@ -972,7 +1057,7 @@ function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boole
     return buildFreshPlayerUnit(state, draft, index, occupiedSpawnTiles);
   });
 
-  let enemies: Array<{ name: string; className: UnitClass; position: Position }> = [];
+  let enemies: EnemySpawnDefinition[] = [];
   if (state.chapter === 1) {
     enemies = [
       { name: "Bandit Axer", className: "Brigand", position: { x: 7, y: 3 } },
@@ -1070,30 +1155,7 @@ function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boole
     ];
   }
 
-  const enemyUnits: Unit[] = enemies.map((enemy) => {
-    const position = findNearestOpenSpawn(state.map, enemy.position, occupiedSpawnTiles);
-    return {
-      id: cryptoRandomId(),
-      name: enemy.name,
-      className: enemy.className,
-      team: "enemy",
-      portraitUrl: getPortraitForUnit("enemy", enemy.className),
-      position,
-      originalPosition: { ...position },
-      stats: seededEnemyStats(enemy.className, state.chapter, enemies.length),
-      acted: false,
-      moved: false,
-      level: state.chapter,
-      exp: 0,
-      alive: true,
-      inventory: {
-        weapons: getWeaponsForClass(enemy.className),
-        items: []
-      },
-      equippedWeapon: getWeaponsForClass(enemy.className)[0] || null, // equip first weapon
-      skillId: null
-    };
-  });
+  const enemyUnits: Unit[] = enemies.map((enemy) => buildEnemyUnit(state, enemy, occupiedSpawnTiles, enemies.length));
 
   state.units = [...playerUnits, ...enemyUnits];
 }
@@ -1520,6 +1582,7 @@ async function takeEnemyPhase(room: Room) {
   await emitState(room);
 
   for (const enemy of state.units.filter((unit) => unit.team === "enemy" && unit.alive)) {
+    if (!enemy.alive) continue;
     const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
     if (livingPlayers.length === 0) {
       break;
@@ -1549,6 +1612,7 @@ async function takeEnemyPhase(room: Room) {
     const victim = attackableTargets(state, enemy).sort((a, b) => a.stats.hp - b.stats.hp)[0];
     if (victim) {
       resolveAttack(state, enemy, victim);
+      enemy.acted = true;
       state.latestCombatEvent = { attackerId: enemy.id, type: 'attack' };
       await emitState(room);
       state.latestCombatEvent = null;
@@ -1564,6 +1628,7 @@ async function takeEnemyPhase(room: Room) {
     state.phase = "player";
     state.turnCount += 1;
     resetPlayerActions(state);
+    spawnDefendReinforcements(state);
     // Skill: Renewal — restore 10% max HP at the start of each player phase
     for (const unit of state.units.filter((u) => u.alive && u.team === "player" && u.skillId === "renewal")) {
       const healAmt = Math.max(1, Math.floor(unit.stats.maxHp * 0.1));
