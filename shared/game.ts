@@ -132,8 +132,9 @@ export type GameMap = {
   tiles: TerrainTile[][];
   playerStarts: Position[];
   objective: {
-    type: "route" | "arrive";
+    type: "route" | "arrive" | "defend";
     target?: Position;
+    turnLimit?: number;
   };
 };
 

@@ -39,14 +39,16 @@ const SHOP_TAB_STORAGE_KEY = "feo:basecamp:shop-tab";
 const SHOP_AFFORDABLE_STORAGE_KEY = "feo:basecamp:affordable-only";
 const SHOP_COMPAT_CLASS_STORAGE_KEY = "feo:basecamp:compat-class";
 const BATTLE_TAB_STORAGE_KEY = "feo:battle:mobile-tab";
-const CAMPAIGN_FINAL_CHAPTER = 5;
+const CAMPAIGN_FINAL_CHAPTER = 7;
 
 const CHAPTER_TITLES: Record<number, string> = {
   1: "Border Skirmish",
   2: "Mountain Pass",
   3: "Shadowed Grove",
   4: "Iron Bastion",
-  5: "Last Redoubt"
+  5: "Last Redoubt",
+  6: "Siege at Dawnwatch",
+  7: "Breakout Path"
 };
 
 const CLASS_WEAPON_TYPES: Record<Unit["className"], string[]> = {
@@ -76,6 +78,16 @@ function formatTabCount(count: number): string {
 
 function getChapterTitle(chapter: number): string {
   return CHAPTER_TITLES[chapter] ?? `Chapter ${chapter}`;
+}
+
+function getObjectiveText(state: GameSnapshot): string {
+  if (state.map.objective.type === "arrive") {
+    return "Reach the goal";
+  }
+  if (state.map.objective.type === "defend") {
+    return `Defend for ${state.map.objective.turnLimit ?? 0} turns`;
+  }
+  return "Rout the enemy";
 }
 
 function AppShell({
@@ -727,7 +739,7 @@ function BattleOutcomeOverlay({
           >
             <p className="eyebrow">Battle Result</p>
             <h2>{winner === "player" ? "Victory" : "Defeat"}</h2>
-            <p>{winner === "player" ? "The enemy force is routed." : "Your party has fallen in battle."}</p>
+            <p>{winner === "player" ? "Your objective is complete." : "Your party has fallen in battle."}</p>
             {canAdvanceToBaseCamp ? (
               isHost ? (
                 <button className="battle-outcome-action" onClick={onAdvanceToBaseCamp}>
@@ -1076,7 +1088,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
   const statusItems = [
     { label: "Socket", value: connected ? "Live" : "Connecting", tone: connected ? "good" as const : "warn" as const },
     { label: "Phase", value: state.phase === "player" ? `Player ${state.turnCount}` : state.phase.toUpperCase() },
-    { label: "Objective", value: state.winner ? (state.winner === "player" ? "Victory" : "Defeat") : "Rout the enemy" },
+    { label: "Objective", value: state.winner ? (state.winner === "player" ? "Victory" : "Defeat") : getObjectiveText(state) },
     { label: "Selected", value: selectedHint }
   ];
   const actionCount = selectedUnit
@@ -1232,7 +1244,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         </div>
         <div className="room-meta">
           <span>Room {state.roomCode}</span>
-          <span>{state.winner ? (state.winner === "player" ? "Victory" : "Defeat") : "Objective: Rout the enemy"}</span>
+          <span>{state.winner ? (state.winner === "player" ? "Victory" : "Defeat") : `Objective: ${getObjectiveText(state)}`}</span>
           <div className="button-group">
             <button className="secondary" onClick={endTurn} disabled={state.phase !== "player" || state.status !== "battle"}>
               End Player Phase

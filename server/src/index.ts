@@ -235,7 +235,7 @@ const CLERIC_HEAL_EXP = 15;
 const PLAYER_INITIATE_COMBAT_EXP = 20;
 const PLAYER_DEFEND_COMBAT_EXP = 10;
 const EXP_PER_LEVEL = 100;
-const CAMPAIGN_FINAL_CHAPTER = 5;
+const CAMPAIGN_FINAL_CHAPTER = 7;
 const CHAT_HISTORY_LIMIT = 80;
 
 function createRoomCode() {
@@ -268,6 +268,17 @@ function makeTile(type: TerrainTile["type"]): TerrainTile {
     default:
       return { type: "grass", moveCost: 1, defense: 0, avoid: 0 };
   }
+}
+
+function getObjectiveLabel(state: GameState): string {
+  const objective = state.map.objective;
+  if (objective.type === "arrive") {
+    return "Reach the goal";
+  }
+  if (objective.type === "defend") {
+    return `Defend for ${objective.turnLimit} turns`;
+  }
+  return "Route the enemy";
 }
 
 function createMap(chapter: number = 1): GameMap {
@@ -454,6 +465,74 @@ function createMap(chapter: number = 1): GameMap {
       ],
       objective: {
         type: "route",
+        target: { x: 9, y: 1 }
+      }
+    };
+  } else if (chapter === 6) {
+    // Chapter 6 map - hold the eastern keep for 15 turns
+    const layout = parseLayout([
+      "GGGGFFGGGG",
+      "GGGFGGGFGG",
+      "GGTTGGGGGG",
+      "GGGGGGFGGG",
+      "GGFGGGGGGG",
+      "GGGGGGGGFG",
+      "GGFGGGGGGG",
+      "GGGGGGFGGG",
+      "GGGFGGGGGG",
+      "GGGGGGGGGG"
+    ]);
+
+    layout[2][2] = "goal";
+
+    return {
+      width: 10,
+      height: 10,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
+      ],
+      objective: {
+        type: "defend",
+        turnLimit: 15
+      }
+    };
+  } else if (chapter === 7) {
+    // Chapter 7 map - break through and arrive at the extraction point
+    const layout = parseLayout([
+      "GGGGGGGGGG",
+      "GFGGGFFGGG",
+      "GGGGFGGGGG",
+      "GGTTGGGGFG",
+      "GGGGGGGGGG",
+      "GGFGGGFGGG",
+      "GGGGGGGGGG",
+      "GGGFGGGGGG",
+      "GGGGGGFGGG",
+      "GGGGGGGGGG"
+    ]);
+
+    layout[1][9] = "goal";
+
+    return {
+      width: 10,
+      height: 10,
+      tiles: layout.map((row) => row.map((tile) => makeTile(tile))),
+      playerStarts: [
+        { x: 1, y: 9 },
+        { x: 2, y: 9 },
+        { x: 3, y: 9 },
+        { x: 1, y: 8 },
+        { x: 2, y: 8 },
+        { x: 3, y: 8 }
+      ],
+      objective: {
+        type: "arrive",
         target: { x: 9, y: 1 }
       }
     };
@@ -958,6 +1037,35 @@ function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boole
       { name: "Ruin Reaver", className: "Brigand", position: { x: 7, y: 8 } },
       { name: "Last Wall", className: "Knight", position: { x: 8, y: 9 } }
     ];
+  } else if (state.chapter === 6) {
+    enemies = [
+      { name: "Keep Breaker", className: "Brigand", position: { x: 8, y: 8 } },
+      { name: "Siege Bow", className: "Archer", position: { x: 9, y: 7 } },
+      { name: "Ash Knight", className: "Knight", position: { x: 7, y: 7 } },
+      { name: "Hex Raider", className: "Mage", position: { x: 8, y: 6 } },
+      { name: "Outer Pike", className: "Knight", position: { x: 9, y: 5 } },
+      { name: "Flank Archer", className: "Archer", position: { x: 7, y: 5 } },
+      { name: "Dread Reaver", className: "Brigand", position: { x: 8, y: 4 } },
+      { name: "Siege Hex", className: "Mage", position: { x: 9, y: 3 } },
+      { name: "Wall Hunter", className: "Archer", position: { x: 7, y: 3 } },
+      { name: "Iron Vanguard", className: "Knight", position: { x: 8, y: 2 } },
+      { name: "Night Reaver", className: "Brigand", position: { x: 9, y: 1 } }
+    ];
+  } else if (state.chapter === 7) {
+    enemies = [
+      { name: "Gate Archer", className: "Archer", position: { x: 7, y: 8 } },
+      { name: "Hold Knight", className: "Knight", position: { x: 8, y: 8 } },
+      { name: "Shade Mage", className: "Mage", position: { x: 9, y: 8 } },
+      { name: "Bridge Reaver", className: "Brigand", position: { x: 7, y: 6 } },
+      { name: "Pursuit Archer", className: "Archer", position: { x: 8, y: 6 } },
+      { name: "Ward Knight", className: "Knight", position: { x: 9, y: 6 } },
+      { name: "Night Hex", className: "Mage", position: { x: 7, y: 4 } },
+      { name: "Wall Reaver", className: "Brigand", position: { x: 8, y: 4 } },
+      { name: "Overwatch", className: "Archer", position: { x: 9, y: 4 } },
+      { name: "Citadel Knight", className: "Knight", position: { x: 8, y: 2 } },
+      { name: "Escape Warden", className: "Mage", position: { x: 9, y: 2 } },
+      { name: "Last Pursuer", className: "Brigand", position: { x: 8, y: 1 } }
+    ];
   }
 
   const enemyUnits: Unit[] = enemies.map((enemy) => {
@@ -1205,8 +1313,45 @@ function resolveHeal(state: GameState, healer: Unit, target: Unit) {
 function checkWinState(state: GameState) {
   const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
   const livingEnemies = state.units.filter((unit) => unit.team === "enemy" && unit.alive);
+  const objective = state.map.objective;
 
-  if (livingEnemies.length === 0) {
+  if (objective.type === "arrive" && objective.target) {
+    const arrived = livingPlayers.some(
+      (unit) => unit.position.x === objective.target!.x && unit.position.y === objective.target!.y
+    );
+    if (arrived) {
+      if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
+        state.phase = "victory";
+        state.status = "battle";
+        state.winner = "player";
+        pushLog(state, `Chapter ${state.chapter} cleared! Objective complete: ${getObjectiveLabel(state)}.`);
+      } else {
+        state.phase = "victory";
+        state.status = "complete";
+        state.winner = "player";
+        pushLog(state, "The squad reached the final objective.");
+      }
+      return;
+    }
+  }
+
+  const defendTurnLimit = objective.type === "defend" ? (objective.turnLimit ?? 0) : 0;
+  if (objective.type === "defend" && state.turnCount >= defendTurnLimit && livingPlayers.length > 0) {
+    if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
+      state.phase = "victory";
+      state.status = "battle";
+      state.winner = "player";
+      pushLog(state, `Chapter ${state.chapter} cleared! Objective complete: ${getObjectiveLabel(state)}.`);
+    } else {
+      state.phase = "victory";
+      state.status = "complete";
+      state.winner = "player";
+      pushLog(state, "The squad held the line through the final turn.");
+    }
+    return;
+  }
+
+  if (objective.type === "route" && livingEnemies.length === 0) {
     if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
       // Keep battle map visible and let the DM move the party into Base Camp.
       state.phase = "victory";
@@ -1496,6 +1641,7 @@ io.on("connection", (socket) => {
     room.state.highlights = [];
     room.state.activePlayerId = playerId;
     pushLog(room.state, `${unit.name} moved to (${position.x + 1}, ${position.y + 1}).`);
+    checkWinState(room.state);
     await emitState(room);
   });
 

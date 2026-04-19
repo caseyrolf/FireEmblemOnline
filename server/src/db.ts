@@ -40,6 +40,16 @@ function mapProfileCharacter(character: { id: string; name: string; className: s
   };
 }
 
+function describeObjective(state: GameState): string {
+  if (state.map.objective.type === "defend") {
+    return `Defend for ${state.map.objective.turnLimit ?? 0} turns`;
+  }
+  if (state.map.objective.type === "arrive") {
+    return "Reach the goal";
+  }
+  return "Route the enemy";
+}
+
 export async function saveRoomState(state: GameState) {
   await prisma.gameRoom.upsert({
     where: { roomCode: state.roomCode },
@@ -93,7 +103,7 @@ export async function listActiveGamesForUser(userId: string) {
       playerName: player.name,
       isHost: player.isHost,
       playerCount: state.players.length,
-      objective: state.map.objective.type === "route" ? "Route the enemy" : "Reach the target"
+      objective: describeObjective(state)
     });
   }
 
