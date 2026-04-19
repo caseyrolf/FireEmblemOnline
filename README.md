@@ -31,6 +31,24 @@ npm run dev
 npm run build
 ```
 
+The production server serves the built frontend from the same origin, so a single Node process can host the entire app.
+
+## Deploy to Fly.io
+
+This repo is set up for a single Fly.io machine with a mounted volume for SQLite persistence.
+
+1. Install the Fly CLI and sign in.
+2. Create the app: `fly apps create <your-app-name>`.
+3. Update `app` in `fly.toml` to match the created app name.
+4. Create a persistent volume: `fly volumes create data --size 1`.
+5. Deploy: `fly deploy`.
+
+Notes:
+
+- The default `DATABASE_URL` in `fly.toml` points SQLite at `/data/fire-emblem-online.db` on the mounted volume.
+- The server keeps active room state in memory, so run a single machine for correctness.
+- By default the client uses the same origin in production, so `VITE_SERVER_URL` is not required for Fly.
+
 ## Current MVP scope
 
 This build focuses on the design document's early phases:

@@ -1,6 +1,9 @@
 import cors from "cors";
 import express from "express";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import {
   calculateDamage,
@@ -65,9 +68,18 @@ type AuthedRequest = express.Request & {
   authToken?: string;
 };
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const clientDistPath = path.resolve(__dirname, "../../../client");
+const hasClientBuild = existsSync(path.join(clientDistPath, "index.html"));
+
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+if (hasClientBuild) {
+  app.use(express.static(clientDistPath));
+}
 
 async function authenticateRequest(req: AuthedRequest, res: express.Response, next: express.NextFunction) {
   const token = readBearerToken(req.headers.authorization);
@@ -228,6 +240,12 @@ app.get("/api/profile/games", authenticateRequest, async (req: AuthedRequest, re
   const games = await listActiveGamesForUser(req.authUser!.id);
   res.json({ games });
 });
+
+if (hasClientBuild) {
+  app.get(/^(?!\/api\/|\/socket\.io\/|\/health$).*/, (_req, res) => {
+    res.sendFile(path.join(clientDistPath, "index.html"));
+  });
+}
 
 const httpServer = createServer(app);
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
@@ -2257,7 +2275,7 @@ const port = Number(process.env.PORT ?? 3001);
 async function start() {
   await ensureDatabase();
   httpServer.listen(port, () => {
-    console.log(`Fire Emblem Online server listening on http://localhost:${port}`);
+    console.log(`Fire Emblem Online server listening on port ${port}`);
   });
 }
 

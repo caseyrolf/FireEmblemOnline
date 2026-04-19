@@ -10,6 +10,7 @@
     "build": "npm run build:server && npm run build:client",
     "build:server": "tsc -p server/tsconfig.json",
     "build:client": "vite build --config client/vite.config.ts",
+    "start": "node dist/server/server/src/index.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push"
   },

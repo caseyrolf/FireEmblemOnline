@@ -311,6 +311,7 @@ export async function ensureDatabase() {
       "name" TEXT NOT NULL,
       "className" TEXT NOT NULL,
       "portraitUrl" TEXT,
+      "skillId" TEXT,
       "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "ProfileCharacter_userId_fkey"
@@ -321,6 +322,9 @@ export async function ensureDatabase() {
   const profileColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("ProfileCharacter")`);
   if (!profileColumns.some((column) => column.name === "portraitUrl")) {
     await prisma.$executeRawUnsafe(`ALTER TABLE "ProfileCharacter" ADD COLUMN "portraitUrl" TEXT`);
+  }
+  if (!profileColumns.some((column) => column.name === "skillId")) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE "ProfileCharacter" ADD COLUMN "skillId" TEXT`);
   }
 
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AuthSession_userId_idx" ON "AuthSession"("userId")`);

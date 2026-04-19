@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.gitignore
+*.log
+prisma/dev.db
+prisma/dev.db-journal
+README.md
+GameDesign.md

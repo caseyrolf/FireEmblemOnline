@@ -146,6 +146,28 @@ function GameTopBanner({ label }: { label: string }) {
   );
 }
 
+function EyeIcon({ open }: { open: boolean }) {
+  if (open) {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6zm10 4a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"
+          fill="currentColor"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M3.3 2 2 3.3l3 3C3.1 7.8 2 9.9 2 12c0 0 3.5 6 10 6 2.1 0 3.9-.5 5.4-1.3l3.3 3.3 1.3-1.3L3.3 2zm8.7 6a4 4 0 0 1 4 4c0 .7-.2 1.4-.5 2L9.9 8.5c.6-.3 1.3-.5 2.1-.5zm10 4s-3.5-6-10-6c-1.5 0-2.9.3-4.1.8l1.7 1.7c.4-.2.9-.4 1.4-.4a4 4 0 0 1 4 4c0 .5-.2 1-.4 1.4l1.6 1.6c1.7-1.2 2.8-3.1 2.8-3.1z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function AuthScreen() {
   const register = useAppStore((store) => store.register);
   const login = useAppStore((store) => store.login);
@@ -155,6 +177,7 @@ function AuthScreen() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState("");
 
   async function submit() {
@@ -185,7 +208,22 @@ function AuthScreen() {
         </label>
         <label className="field">
           <span>Password</span>
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <div className="password-input-wrap">
+            <input
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            <button
+              type="button"
+              className="password-toggle"
+              onClick={() => setShowPassword((value) => !value)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              title={showPassword ? "Hide password" : "Show password"}
+            >
+              <EyeIcon open={showPassword} />
+            </button>
+          </div>
         </label>
         {mode === "register" ? (
           <label className="field">

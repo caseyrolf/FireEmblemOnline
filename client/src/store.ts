@@ -87,7 +87,19 @@ type AppStore = {
   clearError: () => void;
 };
 
-const serverUrl = import.meta.env.VITE_SERVER_URL ?? "http://localhost:3001";
+function resolveServerUrl() {
+  if (import.meta.env.VITE_SERVER_URL) {
+    return import.meta.env.VITE_SERVER_URL;
+  }
+
+  if (import.meta.env.DEV) {
+    return "http://localhost:3001";
+  }
+
+  return window.location.origin;
+}
+
+const serverUrl = resolveServerUrl();
 const SESSION_KEY = "fire-emblem-online-session";
 const AUTH_KEY = "fire-emblem-online-auth";
 const ANNOUNCED_PHASES = new Set<PhaseAnnouncement>(["player", "enemy", "victory", "defeat"]);
@@ -387,6 +399,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
   logout: async () => {
     const token = get().authToken;
+    clearSavedToken();
+    clearSavedSession();
+
+    set({
+      authToken: null,
+      authUser: null,
+      authReady: true,
+      profileCharacters: [],
+      activeGames: [],
+      playerId: null,
+      playerName: "",
+      state: null,
+      view: "home",
+      combatAnimation: null,
+      levelUpEvent: null,
+      shownLevelUpKey: null,
+      phaseAnnouncement: null,
+      resolvedPhase: null,
+      pendingEnemyStates: [],
+      error: null
+    });
+
     try {
       if (token) {
         await apiRequest("/api/auth/logout", { method: "POST" }, token);
@@ -394,27 +428,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch {
       // Best-effort logout.
     }
-
-    clearSavedToken();
-    clearSavedSession();
-      set({
-        authToken: null,
-        authUser: null,
-        authReady: true,
-        profileCharacters: [],
-        activeGames: [],
-        playerId: null,
-        playerName: "",
-        state: null,
-        view: "home",
-        combatAnimation: null,
-        levelUpEvent: null,
-        shownLevelUpKey: null,
-        phaseAnnouncement: null,
-        resolvedPhase: null,
-        pendingEnemyStates: [],
-        error: null
-      });
   },
   createRoom: () =>
     new Promise((resolve) => {
