@@ -115,6 +115,7 @@ export type Unit = {
     items: Item[];
   };
   equippedWeapon: Weapon | null;
+  aiBehavior?: CampaignEnemyRecord["behavior"];
 };
 
 export type PlayerPresence = {
@@ -135,6 +136,41 @@ export type CharacterDraft = {
   skillId?: SkillId;
 };
 
+export type CampaignObjective = {
+  type: "route" | "arrive" | "defend";
+  target?: Position;
+  turnLimit?: number;
+};
+
+export type CampaignEnemyRecord = {
+  id: string;
+  name: string;
+  className: UnitClass;
+  level: number;
+  weaponId: string;
+  position: Position;
+  turn: number;
+  behavior: "advance" | "hold";
+};
+
+export type CampaignMapRecord = {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  tiles: TerrainType[][];
+  playerStarts: Position[];
+  objective: CampaignObjective;
+  enemies: CampaignEnemyRecord[];
+};
+
+export type CampaignRecord = {
+  id: string;
+  name: string;
+  allowedPlayerUnits: number;
+  maps: CampaignMapRecord[];
+};
+
 export type CombatLogEntry = {
   id: string;
   text: string;
@@ -153,17 +189,14 @@ export type GameMap = {
   height: number;
   tiles: TerrainTile[][];
   playerStarts: Position[];
-  objective: {
-    type: "route" | "arrive" | "defend";
-    target?: Position;
-    turnLimit?: number;
-  };
+  objective: CampaignObjective;
 };
 
 export type GameState = {
   roomCode: string;
   status: "lobby" | "battle" | "complete";
   hostId: string;
+  campaign: CampaignRecord | null;
   phase: TurnPhase;
   turnCount: number;
   activePlayerId: string | null;
@@ -190,13 +223,14 @@ export type ServerToClientEvents = {
 };
 
 export type ClientToServerEvents = {
-  createRoom: (payload: { name: string; userId?: string }, callback: (response: JoinRoomResponse) => void) => void;
+  createRoom: (payload: { name: string; userId?: string; campaign?: CampaignRecord }, callback: (response: JoinRoomResponse) => void) => void;
   joinRoom: (payload: { roomCode: string; name: string; userId?: string }, callback: (response: JoinRoomResponse) => void) => void;
   resumeSession: (
     payload: { roomCode: string; playerId: string; name: string; userId?: string },
     callback: (response: JoinRoomResponse) => void
   ) => void;
   createCharacter: (payload: { roomCode: string; name: string; className: UnitClass; portraitUrl?: string; skillId?: SkillId }) => void;
+  removeCharacterDraft: (payload: { roomCode: string; draftId: string }) => void;
   startBattle: (payload: { roomCode: string }) => void;
   selectUnit: (payload: { roomCode: string; unitId: string }) => void;
   moveUnit: (payload: { roomCode: string; unitId: string; position: Position }) => void;
@@ -252,6 +286,7 @@ export type ActiveGameSummary = {
   isHost: boolean;
   playerCount: number;
   objective: string;
+  campaignName?: string;
 };
 
 export const CLASS_TEMPLATES: Record<UnitClass, Stats> = {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, isDancerClass, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId, type TerrainTile } from "../../shared/game";
+import { BASE_CLASS_OPTIONS, CLASS_OPTIONS, TERRAIN_STYLE, canUnitAttackAtDistance, getDefaultPortrait, getClassImage, isStaffClass, isDancerClass, type CampaignRecord, type Position, type Unit, calculateCombatPreview, type CombatPreview, getTerrainDefense, findPath, WEAPONS, ITEMS, CLASS_ATTACK_GIFS, CLASS_HEAL_GIF, CLASS_SKILLS, SKILLS, type SkillId, type TerrainTile } from "../../shared/game";
+import CampaignEditor, { createEmptyCampaign } from "./CampaignEditor";
 import { useAppStore } from "./store";
 
 type GameSnapshot = NonNullable<ReturnType<typeof useAppStore.getState>["state"]>;
@@ -80,6 +81,14 @@ function formatTabCount(count: number): string {
 
 function getChapterTitle(chapter: number): string {
   return CHAPTER_TITLES[chapter] ?? `Chapter ${chapter}`;
+}
+
+function getCampaignChapterLimit(state: GameSnapshot): number {
+  return state.campaign?.maps.length ?? CAMPAIGN_FINAL_CHAPTER;
+}
+
+function getCurrentMapTitle(state: GameSnapshot): string {
+  return state.campaign?.maps[state.chapter - 1]?.name ?? getChapterTitle(state.chapter);
 }
 
 function getObjectiveText(state: GameSnapshot): string {
@@ -246,19 +255,35 @@ function AuthScreen() {
 
 function LandingScreen() {
   const [roomCode, setRoomCode] = useState("");
+  const [editingCampaign, setEditingCampaign] = useState<CampaignRecord | null>(null);
   const authUser = useAppStore((store) => store.authUser)!;
   const connected = useAppStore((store) => store.connected);
   const createRoom = useAppStore((store) => store.createRoom);
   const joinRoom = useAppStore((store) => store.joinRoom);
   const logout = useAppStore((store) => store.logout);
   const profileCharacters = useAppStore((store) => store.profileCharacters);
+  const profileCampaigns = useAppStore((store) => store.profileCampaigns);
   const activeGames = useAppStore((store) => store.activeGames);
   const returnToGame = useAppStore((store) => store.returnToGame);
   const removeActiveGame = useAppStore((store) => store.removeActiveGame);
   const deleteProfileCharacter = useAppStore((store) => store.deleteProfileCharacter);
+  const saveProfileCampaign = useAppStore((store) => store.saveProfileCampaign);
+  const deleteProfileCampaign = useAppStore((store) => store.deleteProfileCampaign);
   const error = useAppStore((store) => store.error);
   const clearError = useAppStore((store) => store.clearError);
   const commanderPortrait = profileCharacters[0]?.portraitUrl ?? getDefaultPortrait("player", "Lord");
+
+  if (editingCampaign) {
+    return (
+      <AppShell showHero={false} shellClassName="home-shell">
+        <CampaignEditor
+          initialCampaign={editingCampaign}
+          onCancel={() => setEditingCampaign(null)}
+          onSave={saveProfileCampaign}
+        />
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell showHero={false} shellClassName="home-shell">
@@ -288,6 +313,9 @@ function LandingScreen() {
             <button className="home-btn" onClick={() => void createRoom()}>
               Create Room
             </button>
+            <button className="home-btn" onClick={() => setEditingCampaign(createEmptyCampaign())}>
+              Create Campaign
+            </button>
             <input
               className="home-code-input"
               value={roomCode}
@@ -305,39 +333,77 @@ function LandingScreen() {
             </div>
           ) : null}
         </aside>
-        <section className="home-games-panel" aria-label="Active games">
-          <h3>Active Games</h3>
-          <div className="home-games-grid">
-            {activeGames.length > 0 ? (
-              activeGames.map((game) => (
-                <article key={`${game.roomCode}-${game.playerId}`} className="home-game-card">
-                  <div className="home-game-code">
-                    <span>{game.phase === "player" ? "PLAYER" : game.phase.toUpperCase()}</span>
-                    <strong>{game.roomCode}</strong>
-                  </div>
-                  <h4>{authUser.displayName} Squad</h4>
-                  <p>{game.objective}</p>
-                  <div className="home-game-meta">
-                    <span>Turn {game.turnCount}</span>
-                    <span>{game.playerCount} Players</span>
-                  </div>
-                  <div className="home-game-actions">
-                    <button className="home-btn" onClick={() => void returnToGame(game)}>
-                      Return to Game
-                    </button>
-                    {!game.isHost ? (
-                      <button className="home-btn home-btn-quiet" onClick={() => void removeActiveGame(game.roomCode)}>
+        <div className="home-main-column">
+          <section className="home-games-panel" aria-label="Active games">
+            <h3>Active Games</h3>
+            <div className="home-games-grid">
+              {activeGames.length > 0 ? (
+                activeGames.map((game) => (
+                  <article key={`${game.roomCode}-${game.playerId}`} className="home-game-card">
+                    <div className="home-game-code">
+                      <span>{game.phase === "player" ? "PLAYER" : game.phase.toUpperCase()}</span>
+                      <strong>{game.roomCode}</strong>
+                    </div>
+                    <h4>{game.campaignName ?? `${authUser.displayName} Squad`}</h4>
+                    <p>{game.objective}</p>
+                    <div className="home-game-meta">
+                      <span>Turn {game.turnCount}</span>
+                      <span>{game.playerCount} Players</span>
+                    </div>
+                    <div className="home-game-actions">
+                      <button className="home-btn" onClick={() => void returnToGame(game)}>
+                        Return to Game
+                      </button>
+                      {!game.isHost ? (
+                        <button className="home-btn home-btn-quiet" onClick={() => void removeActiveGame(game.roomCode)}>
+                          Remove
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <p className="muted">Any room you join will appear here so you can jump back into it later.</p>
+              )}
+            </div>
+          </section>
+          <section className="home-campaigns-panel" aria-label="Saved campaigns">
+            <div className="home-units-header">
+              <h3>Saved Campaigns</h3>
+            </div>
+            <div className="home-campaigns-list">
+              {profileCampaigns.length > 0 ? (
+                profileCampaigns.map((campaign) => (
+                  <article key={campaign.id} className="home-campaign-card">
+                    <div className="home-campaign-card-header">
+                      <div>
+                        <strong>{campaign.name}</strong>
+                        <span>{campaign.maps.length} maps</span>
+                      </div>
+                      <span>{campaign.allowedPlayerUnits} units</span>
+                    </div>
+                    <p>
+                      {campaign.maps.map((map, index) => `${index + 1}. ${map.name}`).join(" | ")}
+                    </p>
+                    <div className="home-game-actions">
+                      <button className="home-btn" onClick={() => void createRoom(campaign)}>
+                        Create Game From Campaign
+                      </button>
+                      <button className="home-btn home-btn-quiet" onClick={() => setEditingCampaign(campaign)}>
+                        Edit
+                      </button>
+                      <button className="home-btn home-btn-quiet" onClick={() => void deleteProfileCampaign(campaign.id)}>
                         Remove
                       </button>
-                    ) : null}
-                  </div>
-                </article>
-              ))
-            ) : (
-              <p className="muted">Any room you join will appear here so you can jump back into it later.</p>
-            )}
-          </div>
-        </section>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <p className="muted">Campaigns you build are stored here so you can launch a new room from them whenever you want.</p>
+              )}
+            </div>
+          </section>
+        </div>
         <section className="home-units-panel" aria-label="Saved profile units">
           <div className="home-units-header">
             <h3>Saved Profile Units</h3>
@@ -376,6 +442,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
   const authUser = useAppStore((store) => store.authUser)!;
   const profileCharacters = useAppStore((store) => store.profileCharacters);
   const createCharacter = useAppStore((store) => store.createCharacter);
+  const removeCharacterDraft = useAppStore((store) => store.removeCharacterDraft);
   const saveProfileCharacter = useAppStore((store) => store.saveProfileCharacter);
   const startBattle = useAppStore((store) => store.startBattle);
   const endGame = useAppStore((store) => store.endGame);
@@ -422,12 +489,15 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Lobby</p>
-          <h2>Room {state.roomCode}</h2>
+          <h2>{state.campaign?.name ?? `Room ${state.roomCode}`}</h2>
         </div>
         <div className="room-meta">
           <span>{authUser.displayName}</span>
           <span>{state.players.length} players</span>
-          <span>{state.characterDrafts.length} heroes drafted</span>
+          <span>
+            {state.characterDrafts.length}
+            {state.campaign ? ` / ${state.campaign.allowedPlayerUnits}` : ""} heroes drafted
+          </span>
           <div className="button-group">
             <button className="secondary" onClick={() => void exitCurrentGame()}>
               Exit Chapter View
@@ -453,7 +523,19 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
                     <span className={player.connected ? "pill online" : "pill offline"}>{player.connected ? "Online" : "Away"}</span>
                   </div>
                   <ul>
-                    {drafts.length > 0 ? drafts.map((draft) => <li key={draft.id}>{draft.name} - {draft.className}</li>) : <li>No units yet</li>}
+                    {drafts.length > 0 ? drafts.map((draft) => (
+                      <li key={draft.id} className="draft-row">
+                        <span>{draft.name} - {draft.className}</span>
+                        {isHost ? (
+                          <button
+                            className="secondary small-button"
+                            onClick={() => removeCharacterDraft(draft.id)}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </li>
+                    )) : <li>No units yet</li>}
                   </ul>
                 </div>
               );
@@ -462,6 +544,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
         </section>
         <section className="panel">
           <h3>Create Character</h3>
+          {state.campaign ? <p className="muted">This campaign allows up to {state.campaign.allowedPlayerUnits} player units total.</p> : null}
           <label className="field">
             <span>Name</span>
             <input value={name} maxLength={20} onChange={(event) => setName(event.target.value)} />
@@ -529,7 +612,7 @@ function LobbyScreen({ state }: { state: GameSnapshot }) {
               Save To Profile
             </button>
             <button className="secondary" disabled={!isHost || state.characterDrafts.length === 0} onClick={startBattle}>
-              {isHost ? "Begin Map" : "Host Starts Battle"}
+              {isHost ? (state.campaign ? "Begin Campaign" : "Begin Map") : "Host Starts Battle"}
             </button>
           </div>
         </section>
@@ -773,6 +856,7 @@ function BattleOutcomeOverlay({
   show,
   isHost,
   chapter,
+  chapterLimit,
   onAdvanceToBaseCamp,
   onExitGame
 }: {
@@ -780,12 +864,13 @@ function BattleOutcomeOverlay({
   show: boolean;
   isHost: boolean;
   chapter: number;
+  chapterLimit: number;
   onAdvanceToBaseCamp: () => void;
   onExitGame: () => void;
 }) {
-  const canAdvanceToBaseCamp = show && winner === "player" && chapter < CAMPAIGN_FINAL_CHAPTER;
+  const canAdvanceToBaseCamp = show && winner === "player" && chapter < chapterLimit;
   const canExitToMainScreen =
-    show && (winner === "enemy" || (winner === "player" && chapter >= CAMPAIGN_FINAL_CHAPTER));
+    show && (winner === "enemy" || (winner === "player" && chapter >= chapterLimit));
 
   return (
     <AnimatePresence>
@@ -976,7 +1061,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Base Camp</p>
-          <h2>Chapter {state.chapter} Complete</h2>
+          <h2>{getCurrentMapTitle(state)} Complete</h2>
           <p className="phase-label">PREPARING FOR NEXT CHAPTER</p>
         </div>
         <div className="room-meta">
@@ -984,7 +1069,7 @@ function BaseCampScreen({ state }: { state: GameSnapshot }) {
           <span>Base Camp</span>
           {isHost ? (
             <button onClick={advanceToChapter}>
-              Advance to Chapter {state.chapter + 1}
+              Advance to {state.campaign?.maps[state.chapter]?.name ?? `Chapter ${state.chapter + 1}`}
             </button>
           ) : null}
           <button className="secondary" onClick={() => void exitCurrentGame()}>
@@ -1310,6 +1395,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
         show={showOutcomeOverlay}
         isHost={isHost}
         chapter={state.chapter}
+        chapterLimit={getCampaignChapterLimit(state)}
         onAdvanceToBaseCamp={advanceToBaseCamp}
         onExitGame={() => void exitCurrentGame()}
       />
@@ -1317,7 +1403,7 @@ function BattleScreen({ state }: { state: GameSnapshot }) {
       <div className="room-header panel">
         <div>
           <p className="eyebrow">Battlefield</p>
-          <h2>Chapter {state.chapter}: {getChapterTitle(state.chapter)}</h2>
+          <h2>Chapter {state.chapter}: {getCurrentMapTitle(state)}</h2>
           <p className="phase-label">{state.phase === "player" ? `Player Phase - Turn ${state.turnCount}` : state.phase.toUpperCase()}</p>
         </div>
         <div className="room-meta">

@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import type { ActiveGameSummary, AuthUser, GameState, ProfileCharacterRecord, SkillId, UnitClass } from "../../shared/game.js";
+import type { ActiveGameSummary, AuthUser, CampaignRecord, GameState, ProfileCharacterRecord, SkillId, UnitClass } from "../../shared/game.js";
 
 const globalForPrisma = globalThis as typeof globalThis & {
   prisma?: PrismaClient;
@@ -38,6 +38,29 @@ function mapProfileCharacter(character: { id: string; name: string; className: s
     className: character.className as UnitClass,
     portraitUrl: character.portraitUrl ?? undefined,
     skillId: (character.skillId as SkillId | null) ?? undefined
+  };
+}
+
+function mapProfileCampaign(campaign: {
+  id: string;
+  name: string;
+  allowedPlayerUnits: number;
+  campaignJson: string;
+}): CampaignRecord {
+  const parsed = JSON.parse(campaign.campaignJson) as CampaignRecord;
+  const maps = parsed.maps.map((map) => ({
+    ...map,
+    enemies: map.enemies.map((enemy) => ({
+      ...enemy,
+      behavior: (enemy.behavior === "hold" ? "hold" : "advance") as "hold" | "advance"
+    }))
+  }));
+  return {
+    ...parsed,
+    maps,
+    id: campaign.id,
+    name: campaign.name,
+    allowedPlayerUnits: campaign.allowedPlayerUnits
   };
 }
 
@@ -104,7 +127,8 @@ export async function listActiveGamesForUser(userId: string) {
       playerName: player.name,
       isHost: player.isHost,
       playerCount: state.players.length,
-      objective: describeObjective(state)
+      objective: describeObjective(state),
+      campaignName: state.campaign?.name ?? undefined
     });
   }
 
@@ -221,6 +245,19 @@ export async function listProfileCharacters(userId: string) {
   return characters.map(mapProfileCharacter);
 }
 
+export async function listProfileCampaigns(userId: string) {
+  const campaigns = await prisma.$queryRawUnsafe<
+    Array<{ id: string; name: string; allowedPlayerUnits: number; campaignJson: string }>
+  >(
+    `SELECT "id", "name", "allowedPlayerUnits", "campaignJson"
+     FROM "ProfileCampaign"
+     WHERE "userId" = ?
+     ORDER BY "updatedAt" DESC`,
+    userId
+  );
+  return campaigns.map(mapProfileCampaign);
+}
+
 export async function createProfileCharacter(input: {
   id: string;
   userId: string;
@@ -247,8 +284,65 @@ export async function createProfileCharacter(input: {
   };
 }
 
+export async function createProfileCampaign(input: {
+  id: string;
+  userId: string;
+  name: string;
+  allowedPlayerUnits: number;
+  campaignJson: string;
+}) {
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO "ProfileCampaign" ("id", "userId", "name", "allowedPlayerUnits", "campaignJson") VALUES (?, ?, ?, ?, ?)`,
+    input.id,
+    input.userId,
+    input.name,
+    input.allowedPlayerUnits,
+    input.campaignJson
+  );
+  return mapProfileCampaign({
+    id: input.id,
+    name: input.name,
+    allowedPlayerUnits: input.allowedPlayerUnits,
+    campaignJson: input.campaignJson
+  });
+}
+
+export async function updateProfileCampaign(input: {
+  id: string;
+  userId: string;
+  name: string;
+  allowedPlayerUnits: number;
+  campaignJson: string;
+}) {
+  const updatedRows = await prisma.$executeRawUnsafe(
+    `UPDATE "ProfileCampaign"
+     SET "name" = ?, "allowedPlayerUnits" = ?, "campaignJson" = ?, "updatedAt" = CURRENT_TIMESTAMP
+     WHERE "id" = ? AND "userId" = ?`,
+    input.name,
+    input.allowedPlayerUnits,
+    input.campaignJson,
+    input.id,
+    input.userId
+  );
+
+  if (updatedRows === 0) {
+    return null;
+  }
+
+  return mapProfileCampaign({
+    id: input.id,
+    name: input.name,
+    allowedPlayerUnits: input.allowedPlayerUnits,
+    campaignJson: input.campaignJson
+  });
+}
+
 export async function deleteProfileCharacter(id: string, userId: string) {
   await prisma.$executeRawUnsafe(`DELETE FROM "ProfileCharacter" WHERE "id" = ? AND "userId" = ?`, id, userId);
+}
+
+export async function deleteProfileCampaign(id: string, userId: string) {
+  await prisma.$executeRawUnsafe(`DELETE FROM "ProfileCampaign" WHERE "id" = ? AND "userId" = ?`, id, userId);
 }
 
 export async function recordRoomOutcome(winnerUserIds: string[], loserUserIds: string[]) {
@@ -319,6 +413,21 @@ export async function ensureDatabase() {
         ON DELETE CASCADE ON UPDATE CASCADE
     )
   `);
+
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "ProfileCampaign" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "userId" TEXT NOT NULL,
+      "name" TEXT NOT NULL,
+      "allowedPlayerUnits" INTEGER NOT NULL,
+      "campaignJson" TEXT NOT NULL,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ProfileCampaign_userId_fkey"
+        FOREIGN KEY ("userId") REFERENCES "User" ("id")
+        ON DELETE CASCADE ON UPDATE CASCADE
+    )
+  `);
   const profileColumns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("ProfileCharacter")`);
   if (!profileColumns.some((column) => column.name === "portraitUrl")) {
     await prisma.$executeRawUnsafe(`ALTER TABLE "ProfileCharacter" ADD COLUMN "portraitUrl" TEXT`);
@@ -329,4 +438,5 @@ export async function ensureDatabase() {
 
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "AuthSession_userId_idx" ON "AuthSession"("userId")`);
   await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ProfileCharacter_userId_idx" ON "ProfileCharacter"("userId")`);
+  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ProfileCampaign_userId_idx" ON "ProfileCampaign"("userId")`);
 }

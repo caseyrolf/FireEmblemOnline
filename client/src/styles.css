@@ -120,6 +120,10 @@ select {
   color: var(--ink);
 }
 
+select option {
+  color: #2a170f;
+}
+
 .app-shell {
   margin: 0 auto;
   padding: clamp(1rem, 2.5vw, 2rem);
@@ -198,6 +202,12 @@ select {
   display: grid;
   gap: 1rem;
   grid-template-columns: minmax(250px, 300px) minmax(400px, 1fr) minmax(280px, 360px);
+}
+
+.home-main-column {
+  display: grid;
+  gap: 1rem;
+  min-height: 0;
 }
 
 .home-sidebar {
@@ -293,7 +303,8 @@ select {
 }
 
 .home-games-panel,
-.home-units-panel {
+.home-units-panel,
+.home-campaigns-panel {
   min-height: 0;
   border-radius: 16px;
   border: 1px solid rgba(165, 126, 79, 0.64);
@@ -305,7 +316,8 @@ select {
 }
 
 .home-games-panel h3,
-.home-units-panel h3 {
+.home-units-panel h3,
+.home-campaigns-panel h3 {
   margin: 0 0 0.8rem;
   text-align: center;
   font-size: clamp(2rem, 3.4vw, 2.8rem);
@@ -317,6 +329,47 @@ select {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 0.9rem;
+}
+
+.home-campaigns-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.home-campaign-card {
+  display: grid;
+  gap: 0.55rem;
+  border-radius: 12px;
+  border: 2px solid rgba(170, 121, 73, 0.55);
+  padding: 0.8rem;
+  background: linear-gradient(180deg, rgba(255, 247, 229, 0.9) 0%, rgba(239, 223, 193, 0.92) 100%);
+  color: #3b2415;
+}
+
+.home-campaign-card p {
+  margin: 0;
+  color: #5d3d29;
+  line-height: 1.45;
+}
+
+.home-campaign-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.home-campaign-card-header div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.home-campaign-card-header strong {
+  font-size: 1.35rem;
+}
+
+.home-campaign-card-header span {
+  color: #6a4931;
 }
 
 .home-game-card {
@@ -432,6 +485,263 @@ select {
 .home-unit-meta span {
   font-size: 2rem;
   line-height: 0.95;
+}
+
+.campaign-editor-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.campaign-editor-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.campaign-editor-header h2 {
+  margin: 0.2rem 0 0.35rem;
+  color: #dab574;
+}
+
+.campaign-editor-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.campaign-editor-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(280px, 360px);
+}
+
+.campaign-editor-sidebar {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.campaign-editor-sidebar .field > span,
+.campaign-editor-sidebar h3 {
+  color: #dab574;
+}
+
+.campaign-editor-sidebar--right {
+  max-height: calc(100vh - 12rem);
+  overflow-y: auto;
+}
+
+.campaign-editor-main {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.campaign-editor-meta-grid {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.campaign-editor-meta-grid .field > span {
+  color: #dab574;
+}
+
+.campaign-resize-row {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
+.campaign-resize-button {
+  margin-bottom: 1rem;
+}
+
+.campaign-map-list,
+.campaign-enemy-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.campaign-map-list-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.campaign-map-list-header h3 {
+  margin: 0;
+  color: #dab574;
+}
+
+.campaign-map-item,
+.campaign-enemy-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  border-radius: 10px;
+  border: 1px solid rgba(157, 111, 63, 0.35);
+  background: rgba(255, 250, 241, 0.64);
+}
+
+.campaign-map-item.is-active,
+.campaign-enemy-card.is-active {
+  border-color: rgba(186, 128, 67, 0.86);
+  box-shadow: 0 0 0 1px rgba(201, 151, 96, 0.34), 0 8px 20px rgba(80, 42, 20, 0.18);
+}
+
+.campaign-map-select {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  display: grid;
+  gap: 0.15rem;
+  justify-items: start;
+  text-align: left;
+}
+
+.campaign-map-select:hover {
+  filter: none;
+  transform: none;
+}
+
+.campaign-map-order-actions,
+.campaign-inline-fields,
+.campaign-toggle-group,
+.campaign-palette,
+.campaign-tool-row {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.campaign-grid-wrap {
+  overflow: auto;
+}
+
+.campaign-grid {
+  display: grid;
+  gap: 2px;
+  border-radius: 12px;
+  background: rgba(71, 42, 18, 0.35);
+  padding: 0.35rem;
+}
+
+.campaign-grid-tile {
+  position: relative;
+  aspect-ratio: 1;
+  min-width: 34px;
+  border-radius: 6px;
+  color: rgba(17, 10, 6, 0.92);
+  font-weight: 700;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(58, 35, 18, 0.16);
+  box-shadow: none;
+}
+
+.campaign-grid-tile.is-objective {
+  box-shadow: inset 0 0 0 2px rgba(243, 201, 92, 0.95);
+}
+
+.campaign-grid-tile.is-selected-enemy {
+  box-shadow: inset 0 0 0 2px rgba(164, 50, 45, 0.95);
+}
+
+.campaign-grid-marker {
+  position: absolute;
+  border-radius: 999px;
+  min-width: 1.15rem;
+  min-height: 1.15rem;
+  padding: 0.05rem 0.22rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.campaign-grid-marker--start {
+  top: 0.18rem;
+  left: 0.18rem;
+  background: rgba(31, 123, 70, 0.9);
+  color: #fff7ea;
+}
+
+.campaign-grid-marker--objective {
+  top: 0.18rem;
+  right: 0.18rem;
+  background: rgba(191, 143, 38, 0.94);
+  color: #2d1a0b;
+}
+
+.campaign-grid-marker--enemy {
+  right: 0.18rem;
+  bottom: 0.18rem;
+  background: rgba(148, 34, 34, 0.92);
+  color: #fff1eb;
+}
+
+.campaign-objective-panel,
+.campaign-hint {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.campaign-hint {
+  padding: 0.75rem 0.9rem;
+  border-radius: 12px;
+  background: rgba(255, 250, 241, 0.64);
+  border: 1px solid rgba(157, 111, 63, 0.35);
+}
+
+.campaign-enemy-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.45rem;
+  align-items: start;
+}
+
+.campaign-enemy-compact-grid {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.campaign-field-compact {
+  margin-bottom: 0;
+  gap: 0.22rem;
+}
+
+.campaign-field-compact > span {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6d4b33;
+}
+
+.campaign-field-compact input,
+.campaign-field-compact select {
+  min-height: 2rem;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.84rem;
+}
+
+.campaign-enemy-card .campaign-map-select strong {
+  font-size: 0.95rem;
+  line-height: 1.1;
+}
+
+.campaign-enemy-card .campaign-map-select span {
+  font-size: 0.72rem;
+  line-height: 1.15;
+  color: #6d4b33;
 }
 
 .app-shell.game-shell {
@@ -814,6 +1124,13 @@ fieldset.field legend {
 .roster {
   display: grid;
   gap: 0.8rem;
+}
+
+.draft-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .roster-card,
@@ -1570,6 +1887,14 @@ ul {
     grid-template-columns: 1fr;
   }
 
+  .campaign-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .campaign-editor-sidebar--right {
+    max-height: none;
+  }
+
   .home-games-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1645,6 +1970,24 @@ ul {
 
   .home-games-grid {
     grid-template-columns: 1fr;
+  }
+
+  .campaign-editor-header,
+  .campaign-editor-actions,
+  .campaign-resize-row,
+  .campaign-map-list-header,
+  .campaign-enemy-card-header,
+  .home-campaign-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .campaign-enemy-compact-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .campaign-grid-tile {
+    min-width: 28px;
   }
 
   .home-unit-card {

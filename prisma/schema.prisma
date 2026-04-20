@@ -27,6 +27,7 @@ model User {
   updatedAt   DateTime           @updatedAt
   sessions    AuthSession[]
   characters  ProfileCharacter[]
+  campaigns   ProfileCampaign[]
 }
 
 model AuthSession {
@@ -47,4 +48,15 @@ model ProfileCharacter {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ProfileCampaign {
+  id                 String   @id
+  userId             String
+  name               String
+  allowedPlayerUnits Int
+  campaignJson       String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

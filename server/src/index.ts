@@ -22,6 +22,10 @@ import {
   PROMOTION_BONUSES,
   type AuthUser,
   type BaseUnitClass,
+  type CampaignEnemyRecord,
+  type CampaignMapRecord,
+  type CampaignObjective,
+  type CampaignRecord,
   type CharacterDraft,
   type ClientToServerEvents,
   type CombatContext,
@@ -45,17 +49,21 @@ import { createId, hashPassword, readBearerToken, verifyPassword } from "./auth.
 import {
   listActiveGamesForUser,
   createAuthSession,
+  createProfileCampaign,
   createProfileCharacter,
   createUserAccount,
   deleteAuthSession,
+  deleteProfileCampaign,
   deleteProfileCharacter,
   ensureDatabase,
   findUserByEmail,
   getSessionUser,
+  listProfileCampaigns,
   listProfileCharacters,
   loadRoomState,
   recordRoomOutcome,
-  saveRoomState
+  saveRoomState,
+  updateProfileCampaign
 } from "./db.js";
 
 type Room = {
@@ -109,6 +117,175 @@ function sanitizeEmail(value: string) {
 
 function authPayload(user: AuthUser, token: string) {
   return { token, user };
+}
+
+function isTerrainType(value: string): value is TerrainTile["type"] {
+  return value === "grass" || value === "forest" || value === "fort" || value === "mountain" || value === "goal";
+}
+
+function getWeaponTypesForClass(className: UnitClass): Weapon["type"][] {
+  switch (className) {
+    case "Lord":
+    case "Great Lord":
+    case "Mercenary":
+    case "Hero":
+    case "Dancer":
+    case "Diva":
+      return ["Sword"];
+    case "Knight":
+    case "General":
+      return ["Lance"];
+    case "Brigand":
+    case "Warrior":
+      return ["Axe"];
+    case "Archer":
+    case "Sniper":
+      return ["Bow"];
+    case "Mage":
+    case "Sage":
+      return ["Magic Tome"];
+    case "Cleric":
+    case "Bishop":
+      return ["Staff"];
+    default:
+      return [];
+  }
+}
+
+function sanitizeCampaignName(value: string) {
+  return value.trim().slice(0, 40);
+}
+
+function sanitizeCampaignRecord(input: unknown, existingId?: string): CampaignRecord | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const raw = input as Partial<CampaignRecord>;
+  const name = sanitizeCampaignName(String(raw.name ?? ""));
+  const allowedPlayerUnits = Number(raw.allowedPlayerUnits ?? 0);
+  const maps = Array.isArray(raw.maps) ? raw.maps : [];
+
+  if (!name || !Number.isInteger(allowedPlayerUnits) || allowedPlayerUnits < 1 || allowedPlayerUnits > 12) {
+    return null;
+  }
+  if (maps.length < 1 || maps.length > 12) {
+    return null;
+  }
+
+  const sanitizedMaps: CampaignMapRecord[] = [];
+  for (let index = 0; index < maps.length; index += 1) {
+    const map = maps[index] as Partial<CampaignMapRecord>;
+    const width = Number(map.width ?? 0);
+    const height = Number(map.height ?? 0);
+    const mapName = sanitizeCampaignName(String(map.name ?? `Map ${index + 1}`));
+    const rawTiles = Array.isArray(map.tiles) ? map.tiles : [];
+    const rawStarts = Array.isArray(map.playerStarts) ? map.playerStarts : [];
+    const rawEnemies = Array.isArray(map.enemies) ? map.enemies : [];
+    const rawObjective = (map.objective ?? {}) as Partial<CampaignObjective>;
+
+    if (!mapName || !Number.isInteger(width) || !Number.isInteger(height) || width < 4 || height < 4 || width > 16 || height > 16) {
+      return null;
+    }
+    if (rawTiles.length !== height || rawTiles.some((row) => !Array.isArray(row) || row.length !== width)) {
+      return null;
+    }
+
+    const tiles = rawTiles.map((row) =>
+      row.map((tile) => {
+        const value = String(tile ?? "grass");
+        if (!isTerrainType(value)) {
+          throw new Error("Invalid terrain.");
+        }
+        return value;
+      })
+    );
+
+    const playerStarts = rawStarts
+      .map((start) => ({ x: Number(start?.x ?? -1), y: Number(start?.y ?? -1) }))
+      .filter((start) => Number.isInteger(start.x) && Number.isInteger(start.y) && start.x >= 0 && start.y >= 0 && start.x < width && start.y < height);
+    const uniqueStartKeys = new Set(playerStarts.map((start) => `${start.x},${start.y}`));
+    if (playerStarts.length !== uniqueStartKeys.size || playerStarts.length === 0) {
+      return null;
+    }
+
+    const objectiveType = rawObjective.type;
+    if (objectiveType !== "route" && objectiveType !== "arrive" && objectiveType !== "defend") {
+      return null;
+    }
+
+    const objective: CampaignObjective = { type: objectiveType };
+    if (objectiveType === "arrive") {
+      const target = {
+        x: Number(rawObjective.target?.x ?? -1),
+        y: Number(rawObjective.target?.y ?? -1)
+      };
+      if (!Number.isInteger(target.x) || !Number.isInteger(target.y) || target.x < 0 || target.y < 0 || target.x >= width || target.y >= height) {
+        return null;
+      }
+      objective.target = target;
+      tiles[target.y][target.x] = "goal";
+    }
+    if (objectiveType === "defend") {
+      const turnLimit = Number(rawObjective.turnLimit ?? 0);
+      if (!Number.isInteger(turnLimit) || turnLimit < 1 || turnLimit > 50) {
+        return null;
+      }
+      objective.turnLimit = turnLimit;
+    }
+
+    const enemies: CampaignEnemyRecord[] = [];
+    for (const rawEnemy of rawEnemies) {
+      const className = String(rawEnemy?.className ?? "") as UnitClass;
+      const weaponId = String(rawEnemy?.weaponId ?? "");
+      const weapon = WEAPONS.find((entry) => entry.id === weaponId);
+      const level = Number(rawEnemy?.level ?? 1);
+      const turn = Number(rawEnemy?.turn ?? 1);
+      const position = {
+        x: Number(rawEnemy?.position?.x ?? -1),
+        y: Number(rawEnemy?.position?.y ?? -1)
+      };
+      const nameValue = sanitizeDisplayName(String(rawEnemy?.name ?? "Enemy"));
+
+      if (!(className in CLASS_TEMPLATES) || !weapon || !getWeaponTypesForClass(className).includes(weapon.type)) {
+        return null;
+      }
+      if (!Number.isInteger(level) || level < 1 || level > 20 || !Number.isInteger(turn) || turn < 1 || turn > 50) {
+        return null;
+      }
+      if (!Number.isInteger(position.x) || !Number.isInteger(position.y) || position.x < 0 || position.y < 0 || position.x >= width || position.y >= height) {
+        return null;
+      }
+      enemies.push({
+        id: String(rawEnemy?.id ?? createId()),
+        name: nameValue || className,
+        className,
+        level,
+        weaponId,
+        position,
+        turn,
+        behavior: rawEnemy?.behavior === "hold" ? "hold" : "advance"
+      });
+    }
+
+    sanitizedMaps.push({
+      id: String(map.id ?? createId()),
+      name: mapName,
+      width,
+      height,
+      tiles,
+      playerStarts,
+      objective,
+      enemies
+    });
+  }
+
+  return {
+    id: existingId ?? String(raw.id ?? createId()),
+    name,
+    allowedPlayerUnits,
+    maps: sanitizedMaps
+  };
 }
 
 app.get("/health", (_req, res) => {
@@ -233,6 +410,68 @@ app.post("/api/profile/characters", authenticateRequest, async (req: AuthedReque
 
 app.delete("/api/profile/characters/:id", authenticateRequest, async (req: AuthedRequest, res) => {
   await deleteProfileCharacter(String(req.params.id), req.authUser!.id);
+  res.json({ ok: true });
+});
+
+app.get("/api/profile/campaigns", authenticateRequest, async (req: AuthedRequest, res) => {
+  const campaigns = await listProfileCampaigns(req.authUser!.id);
+  res.json({ campaigns });
+});
+
+app.post("/api/profile/campaigns", authenticateRequest, async (req: AuthedRequest, res) => {
+  let campaign: CampaignRecord | null = null;
+  try {
+    campaign = sanitizeCampaignRecord(req.body?.campaign);
+  } catch {
+    campaign = null;
+  }
+
+  if (!campaign) {
+    res.status(400).json({ message: "Campaign data is invalid." });
+    return;
+  }
+
+  const saved = await createProfileCampaign({
+    id: campaign.id,
+    userId: req.authUser!.id,
+    name: campaign.name,
+    allowedPlayerUnits: campaign.allowedPlayerUnits,
+    campaignJson: JSON.stringify(campaign)
+  });
+  res.status(201).json({ campaign: saved });
+});
+
+app.put("/api/profile/campaigns/:id", authenticateRequest, async (req: AuthedRequest, res) => {
+  let campaign: CampaignRecord | null = null;
+  try {
+    campaign = sanitizeCampaignRecord(req.body?.campaign, String(req.params.id));
+  } catch {
+    campaign = null;
+  }
+
+  if (!campaign) {
+    res.status(400).json({ message: "Campaign data is invalid." });
+    return;
+  }
+
+  const saved = await updateProfileCampaign({
+    id: campaign.id,
+    userId: req.authUser!.id,
+    name: campaign.name,
+    allowedPlayerUnits: campaign.allowedPlayerUnits,
+    campaignJson: JSON.stringify(campaign)
+  });
+
+  if (!saved) {
+    res.status(404).json({ message: "Campaign not found." });
+    return;
+  }
+
+  res.json({ campaign: saved });
+});
+
+app.delete("/api/profile/campaigns/:id", authenticateRequest, async (req: AuthedRequest, res) => {
+  await deleteProfileCampaign(String(req.params.id), req.authUser!.id);
   res.json({ ok: true });
 });
 
@@ -568,21 +807,54 @@ function createMap(chapter: number = 1): GameMap {
   return createMap(1);
 }
 
+function buildGameMapFromCampaignMap(map: CampaignMapRecord): GameMap {
+  const tiles = map.tiles.map((row) => row.map((tile) => makeTile(tile)));
+  if (map.objective.type === "arrive" && map.objective.target) {
+    tiles[map.objective.target.y][map.objective.target.x] = makeTile("goal");
+  }
+
+  return {
+    width: map.width,
+    height: map.height,
+    tiles,
+    playerStarts: map.playerStarts.map((position) => ({ ...position })),
+    objective: clone(map.objective)
+  };
+}
+
+function getCampaignChapterLimit(state: GameState) {
+  return state.campaign?.maps.length ?? CAMPAIGN_FINAL_CHAPTER;
+}
+
+function getCampaignMapRecord(state: GameState) {
+  return state.campaign?.maps[state.chapter - 1] ?? null;
+}
+
+function getMapForState(state: GameState) {
+  const campaignMap = getCampaignMapRecord(state);
+  if (campaignMap) {
+    return buildGameMapFromCampaignMap(campaignMap);
+  }
+  return createMap(state.chapter);
+}
+
 function cryptoRandomId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function initialState(roomCode: string, hostId: string, hostName: string): GameState {
+function initialState(roomCode: string, hostId: string, hostName: string, campaign: CampaignRecord | null = null): GameState {
+  const chapter = 1;
   return {
     roomCode,
     status: "lobby",
     hostId,
+    campaign,
     phase: "player",
     turnCount: 1,
     activePlayerId: null,
     players: [{ id: hostId, name: hostName, connected: true, isHost: true, gold: 0 }],
     characterDrafts: [],
-    map: createMap(1),
+    map: campaign ? buildGameMapFromCampaignMap(campaign.maps[0]) : createMap(chapter),
     units: [],
     selectedUnitId: null,
     highlights: [],
@@ -590,7 +862,7 @@ function initialState(roomCode: string, hostId: string, hostName: string): GameS
     chatMessages: [],
     winner: null,
     outcomeRecorded: false,
-    chapter: 1,
+    chapter,
     mapStartPlayerUnits: [],
     latestCombatEvent: null,
     latestLevelUpEvent: null,
@@ -627,6 +899,9 @@ function migrateUnit(unit: any): Unit {
   if (unit.equippedWeapon === undefined) {
     unit.equippedWeapon = null;
   }
+  if (unit.team === "enemy" && unit.aiBehavior !== "hold" && unit.aiBehavior !== "advance") {
+    unit.aiBehavior = "advance";
+  }
   return unit as Unit;
 }
 
@@ -657,6 +932,9 @@ async function getOrLoadRoom(roomCode: string) {
   if (!persistedState.chapter) {
     persistedState.chapter = 1;
   }
+  if (!("campaign" in persistedState)) {
+    (persistedState as any).campaign = null;
+  }
   // Add map-start snapshot if missing (best effort for older saves).
   if (!("mapStartPlayerUnits" in persistedState) || !Array.isArray((persistedState as any).mapStartPlayerUnits)) {
     (persistedState as any).mapStartPlayerUnits = persistedState.units
@@ -678,6 +956,9 @@ async function getOrLoadRoom(roomCode: string) {
   // Add chat history if missing
   if (!("chatMessages" in persistedState) || !Array.isArray((persistedState as any).chatMessages)) {
     (persistedState as any).chatMessages = [];
+  }
+  if (!persistedState.map || persistedState.map.width <= 0 || persistedState.map.height <= 0) {
+    persistedState.map = getMapForState(persistedState);
   }
 
   const room: Room = {
@@ -837,6 +1118,33 @@ function attackableTargets(state: GameState, unit: Unit) {
   });
 }
 
+function getBestHealableTarget(state: GameState, healer: Unit, fromPosition: Position = healer.position) {
+  const allies = state.units
+    .filter((candidate) => {
+      if (!candidate.alive || candidate.team !== healer.team || candidate.id === healer.id) {
+        return false;
+      }
+      if (candidate.stats.hp >= candidate.stats.maxHp) {
+        return false;
+      }
+      const gap = Math.abs(candidate.position.x - fromPosition.x) + Math.abs(candidate.position.y - fromPosition.y);
+      return gap <= healer.stats.range;
+    })
+    .sort((a, b) => {
+      const missingA = a.stats.maxHp - a.stats.hp;
+      const missingB = b.stats.maxHp - b.stats.hp;
+      if (missingA !== missingB) {
+        return missingB - missingA;
+      }
+      if (a.stats.hp !== b.stats.hp) {
+        return a.stats.hp - b.stats.hp;
+      }
+      return distance(fromPosition, a.position) - distance(fromPosition, b.position);
+    });
+
+  return allies[0] ?? null;
+}
+
 function canControlUnit(state: GameState, playerId: string, unit: Unit) {
   return unit.ownerId === playerId && state.phase === "player" && state.status === "battle";
 }
@@ -920,6 +1228,8 @@ function getWeaponsForClass(className: UnitClass): Weapon[] {
     case "Great Lord":
     case "Mercenary":
     case "Hero":
+    case "Dancer":
+    case "Diva":
       return WEAPONS.filter(w => w.type === "Sword").slice(0, 2);
     case "Knight":
     case "General":
@@ -936,9 +1246,6 @@ function getWeaponsForClass(className: UnitClass): Weapon[] {
     case "Cleric":
     case "Bishop":
       return WEAPONS.filter(w => w.type === "Staff").slice(0, 2);
-    case "Dancer":
-    case "Diva":
-      return [];
     default:
       return [];
   }
@@ -948,6 +1255,10 @@ type EnemySpawnDefinition = {
   name: string;
   className: UnitClass;
   position: Position;
+  level?: number;
+  weaponId?: string;
+  turn?: number;
+  behavior?: CampaignEnemyRecord["behavior"];
 };
 
 function buildEnemyUnit(
@@ -957,7 +1268,12 @@ function buildEnemyUnit(
   enemyCount: number
 ): Unit {
   const position = findNearestOpenSpawn(state.map, enemy.position, occupiedSpawnTiles);
-  const weapons = getWeaponsForClass(enemy.className);
+  const defaultWeapons = getWeaponsForClass(enemy.className);
+  const selectedWeapon = enemy.weaponId
+    ? defaultWeapons.find((weapon) => weapon.id === enemy.weaponId) ?? WEAPONS.find((weapon) => weapon.id === enemy.weaponId) ?? null
+    : null;
+  const weapons = selectedWeapon ? [selectedWeapon] : defaultWeapons;
+  const level = enemy.level ?? state.chapter;
   return {
     id: cryptoRandomId(),
     name: enemy.name,
@@ -966,10 +1282,10 @@ function buildEnemyUnit(
     portraitUrl: getPortraitForUnit("enemy", enemy.className),
     position,
     originalPosition: { ...position },
-    stats: seededEnemyStats(enemy.className, state.chapter, enemyCount),
+    stats: seededEnemyStats(enemy.className, level, enemyCount),
     acted: false,
     moved: false,
-    level: state.chapter,
+    level,
     exp: 0,
     alive: true,
     inventory: {
@@ -977,7 +1293,8 @@ function buildEnemyUnit(
       items: []
     },
     equippedWeapon: weapons[0] || null,
-    skillId: null
+    skillId: null,
+    aiBehavior: enemy.behavior ?? "advance"
   };
 }
 
@@ -1012,6 +1329,9 @@ function getDefendReinforcementWave(state: GameState): EnemySpawnDefinition[] {
 }
 
 function spawnDefendReinforcements(state: GameState) {
+  if (state.campaign) {
+    return 0;
+  }
   if (state.map.objective.type !== "defend" || state.turnCount < 3 || state.turnCount % 2 === 0) {
     return 0;
   }
@@ -1025,6 +1345,27 @@ function spawnDefendReinforcements(state: GameState) {
 
   state.units.push(...enemyUnits);
   pushLog(state, "Enemy reinforcements arrived.");
+  return enemyUnits.length;
+}
+
+function spawnCampaignReinforcements(state: GameState) {
+  const campaignMap = getCampaignMapRecord(state);
+  if (!campaignMap) {
+    return 0;
+  }
+
+  const reinforcements = campaignMap.enemies.filter((enemy) => enemy.turn === state.turnCount && enemy.turn > 1);
+  if (reinforcements.length === 0) {
+    return 0;
+  }
+
+  const occupiedSpawnTiles = new Set<string>(
+    state.units.filter((unit) => unit.alive).map((unit) => positionKey(unit.position))
+  );
+  const enemyCount = state.units.filter((unit) => unit.team === "enemy" && unit.alive).length + reinforcements.length;
+  const enemyUnits = reinforcements.map((enemy) => buildEnemyUnit(state, enemy, occupiedSpawnTiles, enemyCount));
+  state.units.push(...enemyUnits);
+  pushLog(state, `${enemyUnits.length} enemy reinforcement${enemyUnits.length === 1 ? "" : "s"} arrived.`);
   return enemyUnits.length;
 }
 
@@ -1132,7 +1473,10 @@ function spawnUnits(state: GameState, options?: { preservePlayerProgress?: boole
   });
 
   let enemies: EnemySpawnDefinition[] = [];
-  if (state.chapter === 1) {
+  const campaignMap = getCampaignMapRecord(state);
+  if (campaignMap) {
+    enemies = campaignMap.enemies.filter((enemy) => enemy.turn <= 1);
+  } else if (state.chapter === 1) {
     enemies = [
       { name: "Bandit Axer", className: "Brigand", position: { x: 7, y: 3 } },
       { name: "Outlaw Shot", className: "Archer", position: { x: 9, y: 2 } },
@@ -1246,7 +1590,7 @@ function resetBattleState(state: GameState, options?: { preservePlayerProgress?:
   state.latestCombatEvent = null;
   state.latestLevelUpEvent = null;
   state.latestPromotionEvent = null;
-  state.map = createMap(state.chapter);
+  state.map = getMapForState(state);
   const restoreFromMapStartSnapshot = options?.preservePlayerProgress === undefined && state.mapStartPlayerUnits.length > 0;
   spawnUnits(state, {
     preservePlayerProgress: options?.preservePlayerProgress,
@@ -1594,6 +1938,7 @@ function getConsumableHealAmount(item: Item) {
 }
 
 function checkWinState(state: GameState) {
+  const campaignChapterLimit = getCampaignChapterLimit(state);
   const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
   const livingEnemies = state.units.filter((unit) => unit.team === "enemy" && unit.alive);
   const objective = state.map.objective;
@@ -1603,7 +1948,7 @@ function checkWinState(state: GameState) {
       (unit) => unit.position.x === objective.target!.x && unit.position.y === objective.target!.y
     );
     if (arrived) {
-      if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
+      if (state.chapter < campaignChapterLimit) {
         state.phase = "victory";
         state.status = "battle";
         state.winner = "player";
@@ -1620,7 +1965,7 @@ function checkWinState(state: GameState) {
 
   const defendTurnLimit = objective.type === "defend" ? (objective.turnLimit ?? 0) : 0;
   if (objective.type === "defend" && state.turnCount >= defendTurnLimit && livingPlayers.length > 0) {
-    if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
+    if (state.chapter < campaignChapterLimit) {
       state.phase = "victory";
       state.status = "battle";
       state.winner = "player";
@@ -1635,7 +1980,7 @@ function checkWinState(state: GameState) {
   }
 
   if (objective.type === "route" && livingEnemies.length === 0) {
-    if (state.chapter < CAMPAIGN_FINAL_CHAPTER) {
+    if (state.chapter < campaignChapterLimit) {
       // Keep battle map visible and let the DM move the party into Base Camp.
       state.phase = "victory";
       state.status = "battle";
@@ -1670,12 +2015,72 @@ async function takeEnemyPhase(room: Room) {
   try {
     for (const enemy of state.units.filter((unit) => unit.team === "enemy" && unit.alive)) {
       if (!enemy.alive) continue;
+
+      if (isStaffClass(enemy.className)) {
+        const damagedAlly = state.units.some(
+          (unit) => unit.alive && unit.team === enemy.team && unit.id !== enemy.id && unit.stats.hp < unit.stats.maxHp
+        );
+        if (damagedAlly) {
+          const shouldAdvance = (enemy.aiBehavior ?? "advance") === "advance";
+          let healTarget = getBestHealableTarget(state, enemy);
+          if (!healTarget && shouldAdvance) {
+            const options = movementRange(state, enemy)
+              .filter((option) => !unitAt(state, option))
+              .sort((a, b) => {
+                const targetA = getBestHealableTarget(state, enemy, a);
+                const targetB = getBestHealableTarget(state, enemy, b);
+                const canHealA = targetA ? 0 : 1;
+                const canHealB = targetB ? 0 : 1;
+                if (canHealA !== canHealB) {
+                  return canHealA - canHealB;
+                }
+                if (targetA && targetB) {
+                  const missingA = targetA.stats.maxHp - targetA.stats.hp;
+                  const missingB = targetB.stats.maxHp - targetB.stats.hp;
+                  if (missingA !== missingB) {
+                    return missingB - missingA;
+                  }
+                  return distance(a, targetA.position) - distance(b, targetB.position);
+                }
+                const fallbackA = state.units
+                  .filter((unit) => unit.alive && unit.team === enemy.team && unit.id !== enemy.id && unit.stats.hp < unit.stats.maxHp)
+                  .sort((u1, u2) => distance(a, u1.position) - distance(a, u2.position))[0];
+                const fallbackB = state.units
+                  .filter((unit) => unit.alive && unit.team === enemy.team && unit.id !== enemy.id && unit.stats.hp < unit.stats.maxHp)
+                  .sort((u1, u2) => distance(b, u1.position) - distance(b, u2.position))[0];
+                const distA = fallbackA ? distance(a, fallbackA.position) : Number.MAX_SAFE_INTEGER;
+                const distB = fallbackB ? distance(b, fallbackB.position) : Number.MAX_SAFE_INTEGER;
+                return distA - distB;
+              });
+            if (options[0]) {
+              enemy.position = options[0];
+              enemy.moved = true;
+              state.latestCombatEvent = null;
+              await emitState(room);
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            healTarget = getBestHealableTarget(state, enemy);
+          }
+
+          if (healTarget) {
+            resolveHeal(state, enemy, healTarget);
+            enemy.acted = true;
+            state.latestCombatEvent = { attackerId: enemy.id, type: 'heal' };
+            await emitState(room);
+            state.latestCombatEvent = null;
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            continue;
+          }
+        }
+      }
+
       const livingPlayers = state.units.filter((unit) => unit.team === "player" && unit.alive);
       if (livingPlayers.length === 0) {
         break;
       }
       const target = [...livingPlayers].sort((a, b) => distance(enemy.position, a.position) - distance(enemy.position, b.position))[0];
-      if (!canUnitAttackAtDistance(enemy, distance(enemy.position, target.position))) {
+      const shouldAdvance = (enemy.aiBehavior ?? "advance") === "advance";
+      if (shouldAdvance && !canUnitAttackAtDistance(enemy, distance(enemy.position, target.position))) {
         const options = movementRange(state, enemy)
           .filter((option) => !unitAt(state, option))
           .sort((a, b) => {
@@ -1721,6 +2126,7 @@ async function takeEnemyPhase(room: Room) {
     state.turnCount += 1;
     resetPlayerActions(state);
     spawnDefendReinforcements(state);
+    spawnCampaignReinforcements(state);
     // Skill: Renewal — restore 10% max HP at the start of each player phase
     for (const unit of state.units.filter((u) => u.alive && u.team === "player" && u.skillId === "renewal")) {
       const healAmt = Math.max(1, Math.floor(unit.stats.maxHp * 0.1));
@@ -1790,11 +2196,24 @@ async function leaveRoomByPlayerId(playerId: string) {
 io.on("connection", (socket) => {
   let playerId = "";
 
-  socket.on("createRoom", async ({ name, userId }, callback) => {
+  socket.on("createRoom", async ({ name, userId, campaign }, callback) => {
     const trimmedName = name.trim().slice(0, 20);
     if (!trimmedName) {
       callback({ ok: false, message: "Choose a player name." });
       return;
+    }
+
+    let sanitizedCampaign: CampaignRecord | null = null;
+    if (campaign) {
+      try {
+        sanitizedCampaign = sanitizeCampaignRecord(campaign, campaign.id);
+      } catch {
+        sanitizedCampaign = null;
+      }
+      if (!sanitizedCampaign) {
+        callback({ ok: false, message: "That campaign could not be loaded." });
+        return;
+      }
     }
 
     let roomCode = createRoomCode();
@@ -1803,7 +2222,7 @@ io.on("connection", (socket) => {
     }
 
     playerId = cryptoRandomId();
-    const room = { state: initialState(roomCode, playerId, trimmedName), sockets: new Map<string, string>() };
+    const room = { state: initialState(roomCode, playerId, trimmedName, sanitizedCampaign), sockets: new Map<string, string>() };
     room.state.players[0].userId = userId;
     room.sockets.set(playerId, socket.id);
     rooms.set(roomCode, room);
@@ -1886,6 +2305,10 @@ io.on("connection", (socket) => {
       io.to(socket.id).emit("errorMessage", `Each player can create up to ${CHARACTER_LIMIT} units.`);
       return;
     }
+    if (room.state.campaign && room.state.characterDrafts.length >= room.state.campaign.allowedPlayerUnits) {
+      io.to(socket.id).emit("errorMessage", `This campaign only allows ${room.state.campaign.allowedPlayerUnits} player units.`);
+      return;
+    }
 
     const draft: CharacterDraft = {
       id: cryptoRandomId(),
@@ -1900,6 +2323,23 @@ io.on("connection", (socket) => {
     await emitState(room);
   });
 
+  socket.on("removeCharacterDraft", async ({ roomCode, draftId }) => {
+    const room = await ensureRoom(socket.id, roomCode);
+    if (!room || room.state.status !== "lobby" || !playerId || room.state.hostId !== playerId) {
+      return;
+    }
+
+    const draftIndex = room.state.characterDrafts.findIndex((draft) => draft.id === draftId);
+    if (draftIndex === -1) {
+      return;
+    }
+
+    const [removedDraft] = room.state.characterDrafts.splice(draftIndex, 1);
+    const removedBy = findPlayer(room.state, playerId)?.name ?? "DM";
+    pushLog(room.state, `${removedBy} removed ${removedDraft.name} the ${removedDraft.className} from the party.`);
+    await emitState(room);
+  });
+
   socket.on("startBattle", async ({ roomCode }) => {
     const room = await ensureRoom(socket.id, roomCode);
     if (!room || room.state.status !== "lobby" || room.state.hostId !== playerId) {
@@ -1911,7 +2351,7 @@ io.on("connection", (socket) => {
     }
     resetBattleState(room.state);
     captureMapStartPlayerUnits(room.state);
-    pushLog(room.state, "Battle started.");
+    pushLog(room.state, room.state.campaign ? `${room.state.campaign.name} began.` : "Battle started.");
     await emitState(room);
   });
 
@@ -2089,7 +2529,7 @@ io.on("connection", (socket) => {
       return;
     }
     if (
-      room.state.chapter >= CAMPAIGN_FINAL_CHAPTER ||
+      room.state.chapter >= getCampaignChapterLimit(room.state) ||
       room.state.phase !== "victory" ||
       room.state.winner !== "player"
     ) {
@@ -2263,7 +2703,7 @@ io.on("connection", (socket) => {
     if (!room || room.state.phase !== "basecamp" || room.state.hostId !== playerId) {
       return;
     }
-    if (room.state.chapter >= CAMPAIGN_FINAL_CHAPTER) {
+    if (room.state.chapter >= getCampaignChapterLimit(room.state)) {
       io.to(socket.id).emit("errorMessage", "The campaign is already at the final chapter.");
       return;
     }

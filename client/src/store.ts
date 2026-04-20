@@ -3,6 +3,7 @@ import { io, type Socket } from "socket.io-client";
 import type {
   ActiveGameSummary,
   AuthUser,
+  CampaignRecord,
   ClientToServerEvents,
   GameState,
   JoinRoomResponse,
@@ -36,6 +37,7 @@ type AppStore = {
   authToken: string | null;
   authUser: AuthUser | null;
   profileCharacters: ProfileCharacterRecord[];
+  profileCampaigns: CampaignRecord[];
   activeGames: ActiveGameSummary[];
   attackingUnitId?: never;
   combatAnimation: { unitId: string; className: UnitClass; type: 'attack' | 'heal'; blocksUpdates: boolean } | null;
@@ -51,12 +53,13 @@ type AppStore = {
   register: (input: { email: string; password: string; displayName: string }) => Promise<boolean>;
   login: (input: { email: string; password: string }) => Promise<boolean>;
   logout: () => Promise<void>;
-  createRoom: () => Promise<JoinRoomResponse>;
+  createRoom: (campaign?: CampaignRecord) => Promise<JoinRoomResponse>;
   joinRoom: (roomCode: string) => Promise<JoinRoomResponse>;
   resumeSession: () => Promise<JoinRoomResponse | null>;
   returnToGame: (game: ActiveGameSummary) => Promise<JoinRoomResponse>;
   exitCurrentGame: () => Promise<void>;
   createCharacter: (name: string, className: UnitClass, portraitUrl?: string, skillId?: string) => void;
+  removeCharacterDraft: (draftId: string) => void;
   startBattle: () => void;
   selectUnit: (unitId: string) => void;
   moveUnit: (unitId: string, x: number, y: number) => void;
@@ -81,9 +84,12 @@ type AppStore = {
   clearPromotionEvent: () => void;
   clearPhaseAnnouncement: () => void;
   refreshProfileCharacters: () => Promise<void>;
+  refreshProfileCampaigns: () => Promise<void>;
   refreshActiveGames: () => Promise<void>;
   saveProfileCharacter: (name: string, className: UnitClass, portraitUrl?: string, skillId?: SkillId) => Promise<boolean>;
   deleteProfileCharacter: (id: string) => Promise<void>;
+  saveProfileCampaign: (campaign: CampaignRecord) => Promise<boolean>;
+  deleteProfileCampaign: (id: string) => Promise<void>;
   clearError: () => void;
 };
 
@@ -353,6 +359,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   authToken: null,
   authUser: null,
   profileCharacters: [],
+  profileCampaigns: [],
   activeGames: [],
   attackingUnitId: null as never,
   combatAnimation: null,
@@ -390,7 +397,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   hydrateAuth: async () => {
     const token = readSavedToken();
     if (!token) {
-      set({ authReady: true, authToken: null, authUser: null, profileCharacters: [] });
+      set({ authReady: true, authToken: null, authUser: null, profileCharacters: [], profileCampaigns: [] });
       return;
     }
 
@@ -403,11 +410,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         playerName: auth.user.displayName
       });
       await get().refreshProfileCharacters();
+      await get().refreshProfileCampaigns();
       await get().refreshActiveGames();
     } catch {
       clearSavedToken();
       clearSavedSession();
-      set({ authReady: true, authToken: null, authUser: null, profileCharacters: [], activeGames: [], playerId: null, state: null, view: "home" });
+      set({ authReady: true, authToken: null, authUser: null, profileCharacters: [], profileCampaigns: [], activeGames: [], playerId: null, state: null, view: "home" });
     }
   },
   register: async ({ email, password, displayName }) => {
@@ -428,6 +436,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         error: null
       });
       await get().refreshProfileCharacters();
+      await get().refreshProfileCampaigns();
       await get().refreshActiveGames();
       return true;
     } catch (error) {
@@ -453,6 +462,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         error: null
       });
       await get().refreshProfileCharacters();
+      await get().refreshProfileCampaigns();
       await get().refreshActiveGames();
       return true;
     } catch (error) {
@@ -471,6 +481,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       authUser: null,
       authReady: true,
       profileCharacters: [],
+      profileCampaigns: [],
       activeGames: [],
       playerId: null,
       playerName: "",
@@ -493,10 +504,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // Best-effort logout.
     }
   },
-  createRoom: () =>
+  createRoom: (campaign) =>
     new Promise((resolve) => {
       const { socket, playerName, authUser } = get();
-      socket?.emit("createRoom", { name: playerName, userId: authUser?.id }, (response) => {
+      socket?.emit("createRoom", { name: playerName, userId: authUser?.id, campaign }, (response) => {
         if (response.ok) {
           set({ playerId: response.playerId ?? null, error: null, view: "game" });
           if (response.playerId && response.roomCode) {
@@ -653,6 +664,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       get().socket?.emit("createCharacter", { roomCode, name, className, portraitUrl, skillId: skillId as import("../../shared/game").SkillId | undefined });
     }
   },
+  removeCharacterDraft: (draftId) => {
+    const roomCode = get().state?.roomCode;
+    if (roomCode) {
+      get().socket?.emit("removeCharacterDraft", { roomCode, draftId });
+    }
+  },
   startBattle: () => {
     const roomCode = get().state?.roomCode;
     if (roomCode) {
@@ -775,6 +792,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ error: error instanceof Error ? error.message : "Could not load profile characters." });
     }
   },
+  refreshProfileCampaigns: async () => {
+    const token = get().authToken;
+    if (!token) {
+      set({ profileCampaigns: [] });
+      return;
+    }
+    try {
+      const response = await apiRequest<{ campaigns: CampaignRecord[] }>(
+        "/api/profile/campaigns",
+        { method: "GET" },
+        token
+      );
+      set({ profileCampaigns: response.campaigns, error: null });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not load campaigns." });
+    }
+  },
   refreshActiveGames: async () => {
     const token = get().authToken;
     if (!token) {
@@ -824,6 +858,43 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await get().refreshProfileCharacters();
     } catch (error) {
       set({ error: error instanceof Error ? error.message : "Could not delete profile character." });
+    }
+  },
+  saveProfileCampaign: async (campaign) => {
+    const token = get().authToken;
+    if (!token) {
+      set({ error: "Sign in to save campaigns." });
+      return false;
+    }
+    const exists = get().profileCampaigns.some((entry) => entry.id === campaign.id);
+    try {
+      await apiRequest<{ campaign: CampaignRecord }>(
+        exists ? `/api/profile/campaigns/${campaign.id}` : "/api/profile/campaigns",
+        {
+          method: exists ? "PUT" : "POST",
+          body: JSON.stringify({ campaign })
+        },
+        token
+      );
+      await get().refreshProfileCampaigns();
+      set({ error: null });
+      return true;
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not save campaign." });
+      return false;
+    }
+  },
+  deleteProfileCampaign: async (id) => {
+    const token = get().authToken;
+    if (!token) {
+      return;
+    }
+    try {
+      await apiRequest(`/api/profile/campaigns/${id}`, { method: "DELETE" }, token);
+      await get().refreshProfileCampaigns();
+      set({ error: null });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : "Could not delete campaign." });
     }
   },
   clearCombatAnimation: () => {
