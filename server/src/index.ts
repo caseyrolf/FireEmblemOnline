@@ -498,9 +498,31 @@ const PLAYER_LIMIT = 8;
 const CHARACTER_LIMIT = 8;
 const SESSION_LENGTH_MS = 1000 * 60 * 60 * 24 * 30;
 const CLERIC_HEAL_EXP = 15;
-const PLAYER_INITIATE_COMBAT_EXP = 20;
-const PLAYER_DEFEND_COMBAT_EXP = 10;
+// Base XP values for combat (before level scaling)
+const COMBAT_HIT_BASE_XP = 10;
 const EXP_PER_LEVEL = 100;
+
+/**
+ * Calculate experience gain for a hit/damage (without kill).
+ * Scales based on level difference: higher level enemies = more XP.
+ * Formula: 10 + max(0, (enemy level - player level) * 2), min 1
+ */
+function calculateHitExp(playerLevel: number, enemyLevel: number): number {
+  const levelDiff = enemyLevel - playerLevel;
+  const baseExp = COMBAT_HIT_BASE_XP + levelDiff * 2;
+  return Math.max(1, baseExp);
+}
+
+/**
+ * Calculate experience gain for defeating an enemy.
+ * Scales based on level difference: higher level enemies = more XP.
+ * Formula: 30 + max(0, (enemy level - player level) * 5), capped at 100, min 1
+ */
+function calculateKillExp(playerLevel: number, enemyLevel: number): number {
+  const levelDiff = enemyLevel - playerLevel;
+  const baseExp = 30 + levelDiff * 5;
+  return Math.max(1, Math.min(100, baseExp));
+}
 const CAMPAIGN_FINAL_CHAPTER = 7;
 const CHAT_HISTORY_LIMIT = 80;
 
@@ -1788,14 +1810,8 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   const attackerTerrainDefense = getTerrainDefense(state.map, attacker.position);
   let playerCombatExpAward = 0;
   let playerCombatExpRecipient: Unit | null = null;
-
-  if (attacker.team === "player") {
-    playerCombatExpRecipient = attacker;
-    playerCombatExpAward += PLAYER_INITIATE_COMBAT_EXP;
-  } else if (attacker.team === "enemy" && defender.team === "player") {
-    playerCombatExpRecipient = defender;
-    playerCombatExpAward += PLAYER_DEFEND_COMBAT_EXP;
-  }
+  let playerDealtDamage = false;
+  let playerWasKilled = false;
 
   const combatDistance = distance(attacker.position, defender.position);
 
@@ -1840,6 +1856,10 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
         defender.stats.hp = Math.max(0, defender.stats.hp - bonus);
         if (bonus > 0) pushLog(state, `Dual Strike+ adds ${bonus} extra damage!`);
       }
+      // Track if player dealt damage
+      if (attacker.team === "player" && damage > 0) {
+        playerDealtDamage = true;
+      }
     }
   }
 
@@ -1854,6 +1874,10 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
         defender.stats.hp = Math.max(0, defender.stats.hp - reflected);
         pushLog(state, `${attacker.name}'s Counter reflects ${reflected} damage!`);
       }
+      // Track if player dealt damage
+      if (defender.team === "player" && damage > 0) {
+        playerDealtDamage = true;
+      }
     }
   }
 
@@ -1864,6 +1888,13 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
   } else {
     runAttackerStrikes();
     if (defender.stats.hp > 0) runDefenderStrikes();
+  }
+
+  // Determine player unit and experience recipient
+  if (attacker.team === "player") {
+    playerCombatExpRecipient = attacker;
+  } else if (defender.team === "player") {
+    playerCombatExpRecipient = defender;
   }
 
   function applyPlayerKillEffects(killer: Unit) {
@@ -1888,7 +1919,8 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     defender.alive = false;
     pushLog(state, `${defender.name} was defeated.`);
     if (attacker.team === "player") {
-      playerCombatExpAward += 50;
+      // Award scaled kill XP based on level difference
+      playerCombatExpAward += calculateKillExp(attacker.level, defender.level);
       applyPlayerKillEffects(attacker);
     }
   }
@@ -1898,9 +1930,16 @@ function resolveAttack(state: GameState, attacker: Unit, defender: Unit) {
     attacker.alive = false;
     pushLog(state, `${attacker.name} fell in battle.`);
     if (defender.team === "player") {
-      playerCombatExpAward += 50;
+      // Award scaled kill XP based on level difference
+      playerCombatExpAward += calculateKillExp(defender.level, attacker.level);
       applyPlayerKillEffects(defender);
     }
+  }
+
+  // Award hit XP if player dealt damage but didn't kill
+  if (playerCombatExpRecipient && playerDealtDamage && playerCombatExpRecipient.alive) {
+    const damagedUnit = attacker.team === "player" ? defender : attacker;
+    playerCombatExpAward += calculateHitExp(playerCombatExpRecipient.level, damagedUnit.level);
   }
 
   if (playerCombatExpRecipient && playerCombatExpRecipient.alive) {
